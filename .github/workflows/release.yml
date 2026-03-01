@@ -49,7 +49,7 @@ jobs:
             os-label: darwin-arm64
             ext: ""
             archive: tar.gz
-          - runner: windows-latest
+          - runner: windows-2022
             goos: windows
             goarch: amd64
             os-label: windows-amd64
@@ -130,7 +130,7 @@ jobs:
             ext: ""
             archive: tar.gz
             cmake-extra: "-DGGML_METAL=OFF -DGGML_BLAS=OFF"
-          - runner: windows-latest
+          - runner: windows-2022
             goos: windows
             goarch: amd64
             os-label: windows-amd64

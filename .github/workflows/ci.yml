@@ -59,7 +59,7 @@ jobs:
           - runner: macos-latest
             os-label: darwin-arm64
             goos: darwin
-          - runner: windows-latest
+          - runner: windows-2022
             os-label: windows-amd64
             goos: windows
 
