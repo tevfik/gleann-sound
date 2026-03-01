@@ -165,6 +165,7 @@ jobs:
           cd "$WHISPER_DIR/build"
           cmake .. \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$WHISPER_DIR/dist" \
             -DGGML_CUDA=OFF \
             -DGGML_VULKAN=OFF \
             -DGGML_SYCL=OFF \
@@ -173,6 +174,7 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF \
             ${{ matrix.cmake-extra }}
           cmake --build . --config Release -j$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)
+          cmake --install . --config Release
 
       - name: Determine version
         id: version
@@ -196,8 +198,8 @@ jobs:
           fi
 
           CGO_ENABLED=1 \
-          CGO_CFLAGS="-I$WHISPER_DIR/include -I$WHISPER_DIR/ggml/include" \
-          CGO_LDFLAGS="-L$WHISPER_DIR/build/src -L$WHISPER_DIR/build/ggml/src -lwhisper -lggml -lggml-cpu -lggml-base $EXTRA_LDFLAGS" \
+          CGO_CFLAGS="-I$WHISPER_DIR/dist/include" \
+          CGO_LDFLAGS="-L$WHISPER_DIR/dist/lib -lwhisper -lggml -lggml-cpu -lggml-base $EXTRA_LDFLAGS" \
           go build -trimpath -tags whisper -ldflags "$LDFLAGS" -o "$BINARY" ./cmd/gleann-sound/
 
       - name: Compress binary (tar.gz)
