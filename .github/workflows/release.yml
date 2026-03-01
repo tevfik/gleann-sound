@@ -49,12 +49,6 @@ jobs:
             os-label: darwin-arm64
             ext: ""
             archive: tar.gz
-          - runner: macos-13
-            goos: darwin
-            goarch: amd64
-            os-label: darwin-amd64
-            ext: ""
-            archive: tar.gz
           - runner: windows-latest
             goos: windows
             goarch: amd64
@@ -135,14 +129,7 @@ jobs:
             os-label: darwin-arm64
             ext: ""
             archive: tar.gz
-            cmake-extra: "-DGGML_METAL=OFF"
-          - runner: macos-13
-            goos: darwin
-            goarch: amd64
-            os-label: darwin-amd64
-            ext: ""
-            archive: tar.gz
-            cmake-extra: "-DGGML_METAL=OFF"
+            cmake-extra: "-DGGML_METAL=OFF -DGGML_BLAS=OFF"
           - runner: windows-latest
             goos: windows
             goarch: amd64
