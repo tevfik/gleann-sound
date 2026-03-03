@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tevfik/gleann-sound/internal/core"
+	"github.com/tevfik/gleann-plugin-sound/internal/core"
 )
 
 // ---------------------------------------------------------------------------
@@ -138,5 +138,29 @@ func TestEngine_TranscribeStream_VariousDurations(t *testing.T) {
 				t.Errorf("want duration %q in output, got: %q", tt.wantDur, text)
 			}
 		})
+	}
+}
+
+func TestEngine_TranscribeWindow_ReturnsSegments(t *testing.T) {
+	e, _ := NewEngine("test.bin")
+	pcm := make([]int16, 16000) // 1 second
+	result, _, err := e.TranscribeWindow(context.Background(), pcm, "")
+	if err != nil {
+		t.Fatalf("TranscribeWindow error: %v", err)
+	}
+
+	if len(result.Segments) == 0 {
+		t.Fatal("expected non-empty Segments from stub TranscribeWindow")
+	}
+
+	seg := result.Segments[0]
+	if seg.Start != 0 {
+		t.Errorf("segment Start: want 0, got %v", seg.Start)
+	}
+	if !strings.Contains(seg.Text, "1.0s") {
+		t.Errorf("expected 1.0s in segment text, got: %q", seg.Text)
+	}
+	if !strings.Contains(seg.Text, "stub") {
+		t.Errorf("expected stub marker in segment text, got: %q", seg.Text)
 	}
 }

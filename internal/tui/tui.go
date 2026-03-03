@@ -1,4 +1,4 @@
-// Package tui provides the interactive terminal user interface for gleann-sound.
+// Package tui provides the interactive terminal user interface for gleann-plugin-sound.
 package tui
 
 import (
@@ -7,7 +7,7 @@ import (
 	"os/exec"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/tevfik/gleann-sound/internal/config"
+	"github.com/tevfik/gleann-plugin-sound/internal/config"
 )
 
 // Run starts the interactive TUI application loop.
@@ -112,7 +112,7 @@ func runUninstall() error {
 	return nil
 }
 
-// runCLIMode launches a gleann-sound subcommand (dictate, listen, transcribe)
+// runCLIMode launches a gleann-plugin-sound subcommand (dictate, listen, transcribe)
 // in the current terminal with config-derived flags, then returns to the TUI.
 func runCLIMode(cfg *config.Config, mode string) {
 	exe, err := os.Executable()
@@ -146,6 +146,9 @@ func runCLIMode(cfg *config.Config, mode string) {
 		}
 		if mode == "test" && cfg.Hotkey != "" {
 			args = append(args, "--key", cfg.Hotkey)
+		}
+		if cfg.ExecutionProvider != "" && cfg.ExecutionProvider != "auto" {
+			args = append(args, "--provider", cfg.ExecutionProvider)
 		}
 	}
 

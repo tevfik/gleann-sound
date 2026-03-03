@@ -1,4 +1,4 @@
-module github.com/tevfik/gleann-sound
+module github.com/tevfik/gleann-plugin-sound
 
 go 1.24.2
 

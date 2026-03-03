@@ -74,7 +74,7 @@ var (
 			Foreground(ColorSecondary)
 )
 
-// Logo returns the ASCII art logo for gleann-sound.
+// Logo returns the ASCII art logo for gleann-plugin-sound.
 func Logo() string {
 	logo := `
    ╔═╗┬  ┌─┐┌─┐┌┐┌┌┐┌   ╔═╗┌─┐┬ ┬┌┐┌┌┬┐

@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/tevfik/gleann-sound/internal/core"
+	"github.com/tevfik/gleann-plugin-sound/internal/core"
 )
 
 func init() {
@@ -38,6 +38,12 @@ func (e *Engine) TranscribeFile(_ context.Context, _ string) ([]core.Segment, er
 }
 
 func (e *Engine) SetLanguage(_ string) {}
+
+func (e *Engine) TranscribeWindow(_ context.Context, _ []int16, promptText string) (core.StreamResult, string, error) {
+	return core.StreamResult{}, promptText, fmt.Errorf("onnx stub: not compiled with onnx build tag")
+}
+
+func (e *Engine) ResetStream() {}
 
 func (e *Engine) Close() error { return nil }
 

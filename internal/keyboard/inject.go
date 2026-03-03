@@ -15,7 +15,7 @@ import (
 	"unicode"
 
 	"github.com/go-vgo/robotgo"
-	"github.com/tevfik/gleann-sound/internal/core"
+	"github.com/tevfik/gleann-plugin-sound/internal/core"
 )
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 // Package audio provides OS-level audio capture, voice activity detection,
-// and sample-rate conversion utilities for gleann-sound.
+// and sample-rate conversion utilities for gleann-plugin-sound.
 //
 // All output is normalised to 16 kHz, 16-bit, Mono PCM — the only format
 // accepted by Whisper.
@@ -15,7 +15,7 @@ import (
 	"sync"
 
 	"github.com/gen2brain/malgo"
-	"github.com/tevfik/gleann-sound/internal/core"
+	"github.com/tevfik/gleann-plugin-sound/internal/core"
 )
 
 // ---------------------------------------------------------------------------

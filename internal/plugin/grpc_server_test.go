@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tevfik/gleann-sound/internal/core"
+	"github.com/tevfik/gleann-plugin-sound/internal/core"
 )
 
 // ---------------------------------------------------------------------------

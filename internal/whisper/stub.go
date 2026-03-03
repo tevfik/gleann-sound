@@ -12,7 +12,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/tevfik/gleann-sound/internal/core"
+	"github.com/tevfik/gleann-plugin-sound/internal/core"
 )
 
 // ---------------------------------------------------------------------------
@@ -20,15 +20,16 @@ import (
 // ---------------------------------------------------------------------------
 
 // Engine is a stub that always returns a placeholder transcription.
-// It satisfies core.Transcriber so the rest of the application compiles and
-// runs without whisper.cpp.
+// It satisfies core.Transcriber and core.StreamingTranscriber so the rest
+// of the application compiles and runs without whisper.cpp.
 type Engine struct {
 	model string
 	lang  string
 }
 
-// Compile-time interface check.
+// Compile-time interface checks.
 var _ core.Transcriber = (*Engine)(nil)
+var _ core.StreamingTranscriber = (*Engine)(nil)
 
 func init() {
 	core.RegisterBackend("whisper", func(model string) (core.Transcriber, error) {
@@ -77,6 +78,24 @@ func (e *Engine) TranscribeFile(_ context.Context, filepath string) ([]core.Segm
 			Text:  fmt.Sprintf("[stub: file %q — whisper not linked]", filepath),
 		},
 	}, nil
+}
+
+// TranscribeWindow returns a stub streaming result with a synthetic segment.
+func (e *Engine) TranscribeWindow(_ context.Context, pcmData []int16, promptText string) (core.StreamResult, string, error) {
+	dur := time.Duration(len(pcmData)) * time.Second / 16000
+	text := fmt.Sprintf("[stub: %.1fs window — whisper not linked]", dur.Seconds())
+	return core.StreamResult{
+		Text: text,
+		End:  dur,
+		Segments: []core.Segment{
+			{Start: 0, End: dur, Text: text},
+		},
+	}, promptText, nil
+}
+
+// ResetStream is a no-op for the stub engine.
+func (e *Engine) ResetStream() {
+	log.Println("[whisper-stub] stream reset (no-op)")
 }
 
 // Close is a no-op for the stub engine.

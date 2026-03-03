@@ -11,11 +11,11 @@ import (
 
 func TestDefaultVAD_Defaults(t *testing.T) {
 	v := DefaultVAD()
-	if v.ThresholdMultiplier != 2.0 {
-		t.Errorf("ThresholdMultiplier: want 2.0, got %f", v.ThresholdMultiplier)
+	if v.ThresholdMultiplier != 1.4 {
+		t.Errorf("ThresholdMultiplier: want 1.4, got %f", v.ThresholdMultiplier)
 	}
-	if v.MinAbsoluteEnergy != 150.0 {
-		t.Errorf("MinAbsoluteEnergy: want 150.0, got %f", v.MinAbsoluteEnergy)
+	if v.MinAbsoluteEnergy != 60.0 {
+		t.Errorf("MinAbsoluteEnergy: want 60.0, got %f", v.MinAbsoluteEnergy)
 	}
 }
 

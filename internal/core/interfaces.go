@@ -1,4 +1,4 @@
-// Package core defines the shared domain interfaces and types for gleann-sound.
+// Package core defines the shared domain interfaces and types for gleann-plugin-sound.
 //
 // Every subsystem (audio capture, transcription, keyboard injection) implements
 // one of these contracts so they can be composed, mocked, and swapped independently.
@@ -136,3 +136,61 @@ type TranscriptionEvent struct {
 // TranscriptionHandler is a callback-style sink for streaming transcription
 // events consumed by the gRPC plugin layer.
 type TranscriptionHandler func(event TranscriptionEvent)
+
+// ---------------------------------------------------------------------------
+// Streaming Transcription
+// ---------------------------------------------------------------------------
+
+// StreamResult represents a single streaming transcription result from
+// a sliding-window pipeline.
+type StreamResult struct {
+	// Text is the transcribed text for this window.
+	Text string `json:"text"`
+	// Segments holds per-segment timestamps from whisper.  When available,
+	// the pipeline uses these for timestamp-based deduplication (more
+	// reliable than text matching).  nil when the backend does not produce
+	// per-segment timestamps (e.g. ONNX), in which case the pipeline
+	// falls back to text-based dedup.
+	Segments []Segment `json:"segments,omitempty"`
+	// Start is the absolute start time from stream begin.
+	Start time.Duration `json:"start"`
+	// End is the absolute end time from stream begin.
+	End time.Duration `json:"end"`
+	// IsFinal is true when confirmed (next window has been processed).
+	IsFinal bool `json:"is_final"`
+	// WindowSeq is a monotonic window sequence number.
+	WindowSeq int `json:"window_seq"`
+}
+
+// StreamingTranscriber extends Transcriber with sliding-window streaming
+// capabilities.  Implementations maintain internal state (context prompt,
+// timing) across consecutive TranscribeWindow calls.
+type StreamingTranscriber interface {
+	Transcriber
+
+	// TranscribeWindow processes a single window of PCM data with context
+	// from the previous transcription.  promptText carries the last output
+	// from the prior window for decoder conditioning (initial_prompt for
+	// whisper.cpp, token prepend for ONNX).
+	//
+	// Returns the transcription result and the prompt text to carry forward
+	// to the next window.
+	TranscribeWindow(ctx context.Context, pcm []int16, promptText string) (StreamResult, string, error)
+
+	// ResetStream clears all accumulated context.  Call between sessions
+	// (e.g. when the user stops and restarts listening).
+	ResetStream()
+}
+
+// ---------------------------------------------------------------------------
+// Voice Activity Detection
+// ---------------------------------------------------------------------------
+
+// VADProvider is a pluggable voice activity detector.  Implementations may
+// be energy-based (simple RMS) or neural (e.g. Silero VAD).
+type VADProvider interface {
+	// IsSpeech returns true if the given PCM chunk likely contains speech.
+	IsSpeech(pcm []int16) bool
+	// Reset clears internal state so the VAD re-calibrates.
+	Reset()
+}

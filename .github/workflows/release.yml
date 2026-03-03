@@ -75,32 +75,32 @@ jobs:
         shell: bash
         run: echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
 
-      - name: Build gleann-sound (stub)
+      - name: Build gleann-plugin-sound (stub)
         shell: bash
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "1"
         run: |
-          BINARY="gleann-sound-stub-${{ steps.version.outputs.version }}-${{ matrix.os-label }}${{ matrix.ext }}"
+          BINARY="gleann-plugin-sound-stub-${{ steps.version.outputs.version }}-${{ matrix.os-label }}${{ matrix.ext }}"
           LDFLAGS="-s -w -X main.version=${{ steps.version.outputs.version }}"
-          go build -trimpath -ldflags "$LDFLAGS" -o "$BINARY" ./cmd/gleann-sound/
+          go build -trimpath -ldflags "$LDFLAGS" -o "$BINARY" ./cmd/gleann-plugin-sound/
 
       - name: Compress binary (tar.gz)
         if: matrix.archive == 'tar.gz'
         shell: bash
         run: |
           mkdir -p dist
-          tar czf "dist/gleann-sound-stub-${{ steps.version.outputs.version }}-${{ matrix.os-label }}.tar.gz" \
-            gleann-sound-stub-${{ steps.version.outputs.version }}-${{ matrix.os-label }}
+          tar czf "dist/gleann-plugin-sound-stub-${{ steps.version.outputs.version }}-${{ matrix.os-label }}.tar.gz" \
+            gleann-plugin-sound-stub-${{ steps.version.outputs.version }}-${{ matrix.os-label }}
 
       - name: Compress binary (zip)
         if: matrix.archive == 'zip'
         shell: bash
         run: |
           mkdir -p dist
-          7z a "dist/gleann-sound-stub-${{ steps.version.outputs.version }}-${{ matrix.os-label }}.zip" \
-            "gleann-sound-stub-${{ steps.version.outputs.version }}-${{ matrix.os-label }}${{ matrix.ext }}"
+          7z a "dist/gleann-plugin-sound-stub-${{ steps.version.outputs.version }}-${{ matrix.os-label }}.zip" \
+            "gleann-plugin-sound-stub-${{ steps.version.outputs.version }}-${{ matrix.os-label }}${{ matrix.ext }}"
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
@@ -181,11 +181,11 @@ jobs:
         shell: bash
         run: echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
 
-      - name: Build gleann-sound (whisper)
+      - name: Build gleann-plugin-sound (whisper)
         shell: bash
         run: |
           WHISPER_DIR="$HOME/whisper.cpp"
-          BINARY="gleann-sound-${{ steps.version.outputs.version }}-${{ matrix.os-label }}${{ matrix.ext }}"
+          BINARY="gleann-plugin-sound-${{ steps.version.outputs.version }}-${{ matrix.os-label }}${{ matrix.ext }}"
           LDFLAGS="-s -w -X main.version=${{ steps.version.outputs.version }}"
 
           # Platform-specific linker flags
@@ -200,23 +200,23 @@ jobs:
           CGO_ENABLED=1 \
           CGO_CFLAGS="-I$WHISPER_DIR/dist/include" \
           CGO_LDFLAGS="-L$WHISPER_DIR/dist/lib -lwhisper -lggml -lggml-cpu -lggml-base $EXTRA_LDFLAGS" \
-          go build -trimpath -tags whisper -ldflags "$LDFLAGS" -o "$BINARY" ./cmd/gleann-sound/
+          go build -trimpath -tags whisper -ldflags "$LDFLAGS" -o "$BINARY" ./cmd/gleann-plugin-sound/
 
       - name: Compress binary (tar.gz)
         if: matrix.archive == 'tar.gz'
         shell: bash
         run: |
           mkdir -p dist
-          tar czf "dist/gleann-sound-${{ steps.version.outputs.version }}-${{ matrix.os-label }}.tar.gz" \
-            gleann-sound-${{ steps.version.outputs.version }}-${{ matrix.os-label }}
+          tar czf "dist/gleann-plugin-sound-${{ steps.version.outputs.version }}-${{ matrix.os-label }}.tar.gz" \
+            gleann-plugin-sound-${{ steps.version.outputs.version }}-${{ matrix.os-label }}
 
       - name: Compress binary (zip)
         if: matrix.archive == 'zip'
         shell: bash
         run: |
           mkdir -p dist
-          7z a "dist/gleann-sound-${{ steps.version.outputs.version }}-${{ matrix.os-label }}.zip" \
-            "gleann-sound-${{ steps.version.outputs.version }}-${{ matrix.os-label }}${{ matrix.ext }}"
+          7z a "dist/gleann-plugin-sound-${{ steps.version.outputs.version }}-${{ matrix.os-label }}.zip" \
+            "gleann-plugin-sound-${{ steps.version.outputs.version }}-${{ matrix.os-label }}${{ matrix.ext }}"
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
@@ -254,21 +254,21 @@ jobs:
         id: version
         run: echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
 
-      - name: Build gleann-sound (onnx)
+      - name: Build gleann-plugin-sound (onnx)
         env:
           GOOS: linux
           GOARCH: amd64
           CGO_ENABLED: "1"
         run: |
-          BINARY="gleann-sound-onnx-${{ steps.version.outputs.version }}-linux-amd64"
+          BINARY="gleann-plugin-sound-onnx-${{ steps.version.outputs.version }}-linux-amd64"
           LDFLAGS="-s -w -X main.version=${{ steps.version.outputs.version }}"
-          go build -trimpath -tags onnx -ldflags "$LDFLAGS" -o "$BINARY" ./cmd/gleann-sound/
+          go build -trimpath -tags onnx -ldflags "$LDFLAGS" -o "$BINARY" ./cmd/gleann-plugin-sound/
 
       - name: Compress binary
         run: |
           mkdir -p dist
-          tar czf "dist/gleann-sound-onnx-${{ steps.version.outputs.version }}-linux-amd64.tar.gz" \
-            gleann-sound-onnx-${{ steps.version.outputs.version }}-linux-amd64
+          tar czf "dist/gleann-plugin-sound-onnx-${{ steps.version.outputs.version }}-linux-amd64.tar.gz" \
+            gleann-plugin-sound-onnx-${{ steps.version.outputs.version }}-linux-amd64
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2

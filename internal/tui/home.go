@@ -6,7 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/tevfik/gleann-sound/internal/config"
+	"github.com/tevfik/gleann-plugin-sound/internal/config"
 )
 
 // Screen represents the active screen.
@@ -44,7 +44,7 @@ var postSetupMenuItems = []menuItem{
 	{title: "Test", desc: "Diagnose mic, hotkey, whisper & keyboard", icon: "🔬", screen: ScreenTest},
 	{title: "Setup", desc: "Reconfigure models, language & hotkey", icon: "⚙ ", screen: ScreenSetup},
 	{title: "Install", desc: "Install binary & shell completions system-wide", icon: "📦", screen: ScreenInstall},
-	{title: "Uninstall", desc: "Remove gleann-sound from system", icon: "🗑 ", screen: ScreenUninstall},
+	{title: "Uninstall", desc: "Remove gleann-plugin-sound from system", icon: "🗑 ", screen: ScreenUninstall},
 	{title: "Quit", desc: "Exit", icon: "👋", screen: ScreenHome},
 }
 
@@ -167,6 +167,9 @@ func (m HomeModel) View() string {
 			backendStr = "whisper"
 		}
 		statusLine += fmt.Sprintf(" │ backend: %s", backendStr)
+		if backendStr == "onnx" && m.cfg.ExecutionProvider != "" {
+			statusLine += fmt.Sprintf(" (%s)", m.cfg.ExecutionProvider)
+		}
 		if m.cfg.GRPCAddr != "" {
 			statusLine += fmt.Sprintf(" │ gRPC: %s", m.cfg.GRPCAddr)
 		}

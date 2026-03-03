@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/tevfik/gleann-sound/internal/audio"
+	"github.com/tevfik/gleann-plugin-sound/internal/audio"
 )
 
 // newDevicesCmd creates the "devices" subcommand for listing audio devices.

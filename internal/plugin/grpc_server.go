@@ -1,8 +1,8 @@
 // Package plugin implements the HashiCorp go-plugin gRPC server that allows
-// the main gleann application to communicate with gleann-sound over a local
+// the main gleann application to communicate with gleann-plugin-sound over a local
 // Unix socket or TCP port.
 //
-// The main gleann binary acts as the plugin HOST; gleann-sound acts as the
+// The main gleann binary acts as the plugin HOST; gleann-plugin-sound acts as the
 // plugin SERVER.  Communication uses gRPC for streaming transcription events.
 package plugin
 
@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tevfik/gleann-sound/internal/core"
+	"github.com/tevfik/gleann-plugin-sound/internal/core"
 	"google.golang.org/grpc"
 )
 

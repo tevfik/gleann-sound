@@ -16,19 +16,20 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/tevfik/gleann-sound/internal/audio"
-	"github.com/tevfik/gleann-sound/internal/config"
-	"github.com/tevfik/gleann-sound/internal/core"
-	"github.com/tevfik/gleann-sound/internal/hotkey"
-	"github.com/tevfik/gleann-sound/internal/keyboard"
-	"github.com/tevfik/gleann-sound/internal/plugin"
+	"github.com/tevfik/gleann-plugin-sound/internal/audio"
+	"github.com/tevfik/gleann-plugin-sound/internal/config"
+	"github.com/tevfik/gleann-plugin-sound/internal/core"
+	"github.com/tevfik/gleann-plugin-sound/internal/hotkey"
+	"github.com/tevfik/gleann-plugin-sound/internal/keyboard"
+	"github.com/tevfik/gleann-plugin-sound/internal/pipeline"
+	"github.com/tevfik/gleann-plugin-sound/internal/plugin"
 )
 
 // newDictateCmd creates the "dictate" subcommand (Mode 4: Voice Dictation).
 //
 // Usage:
 //
-//	gleann-sound dictate --key "ctrl+alt+space" --model models/ggml-base.en.bin
+//	gleann-plugin-sound dictate --key "ctrl+alt+space" --model models/ggml-base.en.bin
 //
 // Registers a global hotkey.  While the key is held, audio is captured from
 // the default mic.  On release, the audio is transcribed via Whisper and the
@@ -158,7 +159,11 @@ Press Ctrl+C to exit.`,
 				go func() {
 					log.Printf("[dictate] starting gRPC server on %s", grpcAddr)
 					if err := srv.Serve(grpcAddr); err != nil {
-						log.Printf("[dictate] gRPC server error: %v", err)
+						if strings.Contains(err.Error(), "address already in use") {
+							log.Printf("[dictate] gRPC: port %s already in use, skipping", grpcAddr)
+						} else {
+							log.Printf("[dictate] gRPC server error: %v", err)
+						}
 					}
 				}()
 				defer srv.Stop()
@@ -169,7 +174,7 @@ Press Ctrl+C to exit.`,
 			log.Println("[dictate] press Ctrl+C to exit")
 
 			// ── Push-to-talk event loop ────────────────────────────
-			return dictateLoop(ctx, hk, capturer, engine, injector)
+			return dictateLoop(ctx, hk, capturer, engine, injector, backend)
 		},
 	}
 
@@ -185,21 +190,142 @@ Press Ctrl+C to exit.`,
 	return cmd
 }
 
-// dictateLoop implements the core push-to-talk cycle with async transcription.
+// dictateLoop implements the core push-to-talk cycle with streaming transcription.
 //
-// Pipeline:
-//  1. Wait for hotkey press   → start recording
-//  2. While held, accumulate PCM; auto-submit chunks >30 s
-//  3. Wait for hotkey release → stop recording, submit remaining audio
-//  4. Transcription + injection happen async → immediately ready for next press
+// Pipeline (streaming mode):
+//  1. Wait for hotkey press   → start recording + streaming pipeline
+//  2. While held, pipeline transcribes 3s windows every 2s → inject text incrementally
+//  3. Wait for hotkey release → flush remaining audio → inject final text
+//  4. Immediately ready for next press
+//
+// Falls back to batch mode if the engine doesn't support StreamingTranscriber.
 func dictateLoop(
 	ctx context.Context,
 	hk *hotkey.Hotkey,
 	capturer *audio.MalgoCapturer,
 	engine core.Transcriber,
 	injector *keyboard.RobotGoInjector,
+	backend string,
 ) error {
-	// Async transcription pipeline — processes jobs in order.
+	// Check if engine supports streaming.
+	streamEngine, isStreaming := engine.(core.StreamingTranscriber)
+
+	if isStreaming {
+		log.Println("[dictate] using streaming pipeline (incremental injection)")
+		return dictateLoopStreaming(ctx, hk, capturer, streamEngine, injector, backend)
+	}
+
+	log.Println("[dictate] using batch mode (engine doesn't support streaming)")
+	return dictateLoopBatch(ctx, hk, capturer, engine, injector)
+}
+
+// dictateLoopStreaming implements push-to-talk with real-time streaming.
+// Text appears incrementally while the user is still holding the hotkey.
+func dictateLoopStreaming(
+	ctx context.Context,
+	hk *hotkey.Hotkey,
+	capturer *audio.MalgoCapturer,
+	engine core.StreamingTranscriber,
+	injector *keyboard.RobotGoInjector,
+	backend string,
+) error {
+	vad := audio.DefaultVAD()
+
+	for {
+		// ── Wait for Keydown ───────────────────────────────────
+		log.Println("[dictate] waiting for hotkey press...")
+		if !waitForEvent(ctx, hk.Keydown()) {
+			break
+		}
+		log.Println("[dictate] hotkey pressed — streaming transcription...")
+
+		// Reset stream context for fresh session.
+		engine.ResetStream()
+		vad.Reset()
+
+		// ── Start capture into channel ─────────────────────────
+		audioCh := make(chan []int16, 128)
+		captureCtx, captureCancel := context.WithCancel(ctx)
+
+		err := capturer.Start(captureCtx, func(pcmData []int16) {
+			chunk := make([]int16, len(pcmData))
+			copy(chunk, pcmData)
+			select {
+			case audioCh <- chunk:
+			default:
+				// Drop if backed up — should not happen.
+			}
+		})
+		if err != nil {
+			captureCancel()
+			log.Printf("[dictate] capture error: %v", err)
+			continue
+		}
+
+		// ── Run streaming pipeline in background ───────────────
+		pipeCfg := pipeline.DefaultConfig()
+		if backend == "onnx" {
+			pipeCfg = pipeline.ONNXConfig()
+		}
+		pipe := pipeline.NewStreamingPipeline(engine, vad, pipeCfg)
+
+		// Pipeline uses parent ctx — NOT captureCtx — so it can still
+		// flush remaining audio after capture is stopped.
+		pipeCtx, pipeCancel := context.WithCancel(ctx)
+		var pipeWg sync.WaitGroup
+		pipeWg.Add(1)
+		go func() {
+			defer pipeWg.Done()
+			_ = pipe.Run(pipeCtx, audioCh, func(result core.StreamResult) {
+				text := strings.TrimSpace(result.Text)
+				if text == "" {
+					return
+				}
+				log.Printf("[dictate] streaming: %q", text)
+				// Add trailing space for natural word separation.
+				if err := injector.TypeText(text + " "); err != nil {
+					log.Printf("[dictate] injection error: %v", err)
+				}
+			})
+		}()
+
+		// ── Wait for Keyup ─────────────────────────────────────
+		if !waitForEvent(ctx, hk.Keyup()) {
+			// Ctrl+C / shutdown — cancel everything and exit.
+			captureCancel()
+			_ = capturer.Stop()
+			close(audioCh)
+			pipeCancel()
+			pipeWg.Wait()
+			break
+		}
+		log.Println("[dictate] hotkey released — flushing...")
+
+		// ── Stop capture, close channel, let pipeline flush ────
+		captureCancel()
+		_ = capturer.Stop()
+		close(audioCh)
+		// Pipeline sees closed channel → flushes remaining audio.
+		// Wait for flush to complete BEFORE cancelling pipeline context.
+		pipeWg.Wait()
+		pipeCancel()
+
+		// Force GC to free audio buffers.
+		runtime.GC()
+	}
+
+	return nil
+}
+
+// dictateLoopBatch is the legacy batch transcription mode for engines that
+// don't support StreamingTranscriber. Kept as fallback.
+func dictateLoopBatch(
+	ctx context.Context,
+	hk *hotkey.Hotkey,
+	capturer *audio.MalgoCapturer,
+	engine core.Transcriber,
+	injector *keyboard.RobotGoInjector,
+) error {
 	type txJob struct {
 		pcm []int16
 		seq int
@@ -212,14 +338,14 @@ func dictateLoop(
 		defer pipeWg.Done()
 		for j := range jobCh {
 			dur := float64(len(j.pcm)) / float64(audio.WhisperSampleRate)
-			log.Printf("[dictate] 🔄 transcribing %.2fs chunk #%d …", dur, j.seq)
+			log.Printf("[dictate] transcribing %.2fs chunk #%d …", dur, j.seq)
 
 			start := time.Now()
 			text, err := engine.TranscribeStream(ctx, j.pcm)
-			j.pcm = nil // release PCM memory immediately
+			j.pcm = nil
 			elapsed := time.Since(start)
 			if err != nil {
-				log.Printf("[dictate] ✗ transcription error: %v", err)
+				log.Printf("[dictate] transcription error: %v", err)
 				continue
 			}
 			text = strings.TrimSpace(text)
@@ -227,32 +353,25 @@ func dictateLoop(
 				log.Printf("[dictate] chunk #%d: silence (%.1fs) — skipping", j.seq, dur)
 				continue
 			}
-			log.Printf("[dictate] ✓ chunk #%d transcribed in %v: %q", j.seq, elapsed, text)
+			log.Printf("[dictate] chunk #%d transcribed in %v: %q", j.seq, elapsed, text)
 
 			if err := injector.TypeText(text); err != nil {
-				log.Printf("[dictate] ✗ injection error: %v", err)
-			} else {
-				log.Println("[dictate] ✓ text injected")
+				log.Printf("[dictate] injection error: %v", err)
 			}
-
-			// Return freed memory to the OS to prevent RSS growth.
 			runtime.GC()
 		}
 	}()
 
-	const chunkSec = 30
-	const chunkSamples = chunkSec * audio.WhisperSampleRate
-
+	const chunkSamples = 30 * audio.WhisperSampleRate
 	var seq atomic.Int32
+
 	for {
-		// ── Wait for Keydown ───────────────────────────────────
 		log.Println("[dictate] waiting for hotkey press...")
 		if !waitForEvent(ctx, hk.Keydown()) {
 			break
 		}
-		log.Println("[dictate] 🎙  hotkey pressed — recording...")
+		log.Println("[dictate] hotkey pressed — recording...")
 
-		// ── Start capture ──────────────────────────────────────
 		var (
 			bufMu sync.Mutex
 			buf   []int16
@@ -262,18 +381,16 @@ func dictateLoop(
 		err := capturer.Start(captureCtx, func(pcmData []int16) {
 			bufMu.Lock()
 			buf = append(buf, pcmData...)
-			// Auto-submit long chunks for streaming transcription.
 			if len(buf) >= chunkSamples {
 				chunk := make([]int16, len(buf))
 				copy(chunk, buf)
 				buf = buf[:0]
 				bufMu.Unlock()
 				s := seq.Add(1)
-				log.Printf("[dictate] auto-submitting %ds chunk #%d", chunkSec, s)
 				select {
 				case jobCh <- txJob{pcm: chunk, seq: int(s)}:
 				default:
-					log.Println("[dictate] ⚠ pipeline busy — dropping chunk")
+					log.Println("[dictate] pipeline busy — dropping chunk")
 				}
 				return
 			}
@@ -281,19 +398,17 @@ func dictateLoop(
 		})
 		if err != nil {
 			captureCancel()
-			log.Printf("[dictate] ✗ capture error: %v", err)
+			log.Printf("[dictate] capture error: %v", err)
 			continue
 		}
 
-		// ── Wait for Keyup ─────────────────────────────────────
 		if !waitForEvent(ctx, hk.Keyup()) {
 			captureCancel()
 			_ = capturer.Stop()
 			break
 		}
-		log.Println("[dictate] ⏹  hotkey released — stopped recording")
+		log.Println("[dictate] hotkey released — stopped recording")
 
-		// ── Stop capture & grab remaining buffer ───────────────
 		captureCancel()
 		_ = capturer.Stop()
 
@@ -308,18 +423,15 @@ func dictateLoop(
 			if durSec < 0.3 {
 				log.Println("[dictate] final chunk too short (<0.3s) — skipping")
 			} else if !hasSpeech(remaining) {
-				log.Printf("[dictate] final chunk %.2fs is silence (VAD) — skipping", durSec)
+				log.Printf("[dictate] final chunk %.2fs is silence — skipping", durSec)
 			} else {
 				s := seq.Add(1)
-				log.Printf("[dictate] submitting final %.2fs chunk #%d", durSec, s)
 				select {
 				case jobCh <- txJob{pcm: remaining, seq: int(s)}:
 				default:
-					log.Println("[dictate] ⚠ pipeline busy — dropping final chunk")
+					log.Println("[dictate] pipeline busy — dropping final chunk")
 				}
 			}
-		} else {
-			log.Println("[dictate] ✗ no audio captured — skipping")
 		}
 	}
 

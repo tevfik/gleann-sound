@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/tevfik/gleann-sound/internal/config"
+	"github.com/tevfik/gleann-plugin-sound/internal/config"
 )
 
 // ── Home Model Tests ───────────────────────────────────────────
@@ -211,7 +211,7 @@ func TestBashCompletion(t *testing.T) {
 	if c == "" {
 		t.Error("bash completion is empty")
 	}
-	for _, word := range []string{"gleann-sound", "transcribe", "listen", "serve", "dictate", "tui"} {
+	for _, word := range []string{"gleann-plugin-sound", "transcribe", "listen", "serve", "dictate", "tui"} {
 		if !contains(c, word) {
 			t.Errorf("bash completion missing %q", word)
 		}
@@ -223,7 +223,7 @@ func TestZshCompletion(t *testing.T) {
 	if c == "" {
 		t.Error("zsh completion is empty")
 	}
-	for _, word := range []string{"gleann-sound", "transcribe", "listen", "serve", "dictate", "tui"} {
+	for _, word := range []string{"gleann-plugin-sound", "transcribe", "listen", "serve", "dictate", "tui"} {
 		if !contains(c, word) {
 			t.Errorf("zsh completion missing %q", word)
 		}
@@ -235,7 +235,7 @@ func TestFishCompletion(t *testing.T) {
 	if c == "" {
 		t.Error("fish completion is empty")
 	}
-	for _, word := range []string{"gleann-sound", "transcribe", "listen", "serve", "dictate", "tui"} {
+	for _, word := range []string{"gleann-plugin-sound", "transcribe", "listen", "serve", "dictate", "tui"} {
 		if !contains(c, word) {
 			t.Errorf("fish completion missing %q", word)
 		}

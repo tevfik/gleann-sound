@@ -1,6 +1,6 @@
-// Package main is the entry point for the gleann-sound CLI.
+// Package main is the entry point for the gleann-plugin-sound CLI.
 //
-// gleann-sound is a companion daemon/plugin for the gleann vector database
+// gleann-plugin-sound is a companion daemon/plugin for the gleann vector database
 // that handles heavy audio processing, CGO integrations, and OS-level hooks.
 // It supports four execution modes:
 //
@@ -15,11 +15,11 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/tevfik/gleann-sound/internal/config"
+	"github.com/tevfik/gleann-plugin-sound/internal/config"
 
 	// Register backends — import for side-effect init().
-	_ "github.com/tevfik/gleann-sound/internal/onnx"
-	_ "github.com/tevfik/gleann-sound/internal/whisper"
+	_ "github.com/tevfik/gleann-plugin-sound/internal/onnx"
+	_ "github.com/tevfik/gleann-plugin-sound/internal/whisper"
 )
 
 // version is set at build time via -ldflags.
@@ -27,15 +27,15 @@ var version = "dev"
 
 func main() {
 	root := &cobra.Command{
-		Use:   "gleann-sound",
+		Use:   "gleann-plugin-sound",
 		Short: "Audio processing companion for the gleann RAG engine",
-		Long: `gleann-sound captures audio, runs local Whisper inference, and
+		Long: `gleann-plugin-sound captures audio, runs local Whisper inference, and
 delivers transcriptions — either as CLI output, background gRPC events
 for the main gleann application, or as injected keystrokes for voice dictation.
 
 All audio is processed locally using whisper.cpp — no cloud APIs required.
 
-Run 'gleann-sound tui' for interactive setup and configuration.`,
+Run 'gleann-plugin-sound tui' for interactive setup and configuration.`,
 		Version: version,
 	}
 
@@ -47,15 +47,38 @@ Run 'gleann-sound tui' for interactive setup and configuration.`,
 		}
 	}
 
+	// Load execution provider preference from config.
+	defaultBackend := "whisper"
+	defaultProvider := "auto"
+	if cfg := config.Load(); cfg != nil && cfg.Completed {
+		if cfg.Backend != "" {
+			defaultBackend = cfg.Backend
+		}
+		if cfg.ExecutionProvider != "" {
+			defaultProvider = cfg.ExecutionProvider
+		}
+	}
+
 	// Persistent flags shared by all subcommands.
 	root.PersistentFlags().String("model", defaultModel,
 		"Path to the Whisper GGML model file")
-	root.PersistentFlags().String("backend", "whisper",
+	root.PersistentFlags().String("backend", defaultBackend,
 		"Transcription backend: whisper (default) or onnx")
+	root.PersistentFlags().String("provider", defaultProvider,
+		"ONNX execution provider: auto (default), cuda, cpu")
 	root.PersistentFlags().Bool("verbose", false,
 		"Enable verbose / debug logging")
 
-	// Register execution modes and TUI.
+	// Apply execution provider before any subcommand runs.
+	root.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		provider, _ := cmd.Flags().GetString("provider")
+		if provider != "" {
+			// Import is already done via init(); set the provider for ONNX engine.
+			setONNXProvider(provider)
+		}
+	}
+
+	// Register execution modes, TUI, and plugin integration.
 	root.AddCommand(
 		newTranscribeCmd(),
 		newListenCmd(),
@@ -64,6 +87,8 @@ Run 'gleann-sound tui' for interactive setup and configuration.`,
 		newTUICmd(),
 		newTestCmd(),
 		newDevicesCmd(),
+		newPluginServeCmd(),
+		newInstallPluginCmd(),
 	)
 
 	if err := root.Execute(); err != nil {

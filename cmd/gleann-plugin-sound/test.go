@@ -12,11 +12,11 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/tevfik/gleann-sound/internal/audio"
-	"github.com/tevfik/gleann-sound/internal/config"
-	"github.com/tevfik/gleann-sound/internal/core"
-	"github.com/tevfik/gleann-sound/internal/hotkey"
-	"github.com/tevfik/gleann-sound/internal/keyboard"
+	"github.com/tevfik/gleann-plugin-sound/internal/audio"
+	"github.com/tevfik/gleann-plugin-sound/internal/config"
+	"github.com/tevfik/gleann-plugin-sound/internal/core"
+	"github.com/tevfik/gleann-plugin-sound/internal/hotkey"
+	"github.com/tevfik/gleann-plugin-sound/internal/keyboard"
 )
 
 // newTestCmd creates the "test" subcommand for diagnosing hardware & config.
@@ -52,7 +52,7 @@ Uses the config from ~/.gleann/sound.json or CLI flags.`,
 				lang = cfg.Language
 			}
 
-			printHeader("gleann-sound Diagnostic Test")
+			printHeader("gleann-plugin-sound Diagnostic Test")
 			fmt.Println()
 
 			// ── Step 1: Microphone ─────────────────────────────
@@ -272,7 +272,7 @@ func testKeyboard() bool {
 	injector := keyboard.NewRobotGoInjector()
 
 	// Type a simple test into stdout.
-	testStr := "gleann-sound test ✓"
+	testStr := "gleann-plugin-sound test ✓"
 	fmt.Printf("  Injecting: %q\n", testStr)
 	fmt.Print("  Output: ")
 

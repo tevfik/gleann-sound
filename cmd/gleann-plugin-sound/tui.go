@@ -2,14 +2,14 @@ package main
 
 import (
 	"github.com/spf13/cobra"
-	"github.com/tevfik/gleann-sound/internal/tui"
+	"github.com/tevfik/gleann-plugin-sound/internal/tui"
 )
 
 func newTUICmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "tui",
 		Short: "Open interactive setup & configuration UI",
-		Long: `Launch the interactive terminal UI for gleann-sound.
+		Long: `Launch the interactive terminal UI for gleann-plugin-sound.
 
 The TUI provides:
   • Setup wizard — select and download Whisper models, configure

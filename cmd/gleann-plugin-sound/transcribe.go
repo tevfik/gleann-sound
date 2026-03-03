@@ -9,15 +9,15 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/tevfik/gleann-sound/internal/config"
-	"github.com/tevfik/gleann-sound/internal/core"
+	"github.com/tevfik/gleann-plugin-sound/internal/config"
+	"github.com/tevfik/gleann-plugin-sound/internal/core"
 )
 
 // newTranscribeCmd creates the "transcribe" subcommand (Mode 1: On-Demand).
 //
 // Usage:
 //
-//	gleann-sound transcribe --file recording.mp3 --model models/ggml-base.en.bin
+//	gleann-plugin-sound transcribe --file recording.mp3 --model models/ggml-base.en.bin
 //
 // Reads an audio file, converts it to 16 kHz PCM (via ffmpeg), runs Whisper,
 // and outputs timestamped JSONL to stdout.

@@ -3,7 +3,12 @@ package audio
 import (
 	"math"
 	"sync"
+
+	"github.com/tevfik/gleann-plugin-sound/internal/core"
 )
+
+// Compile-time check: VAD satisfies core.VADProvider.
+var _ core.VADProvider = (*VAD)(nil)
 
 // ---------------------------------------------------------------------------
 // Voice Activity Detection — energy-based
@@ -13,7 +18,7 @@ import (
 // 16-bit PCM samples.  It maintains a running average of frame energy and
 // compares each incoming chunk against a configurable threshold multiplier.
 //
-// This is intentionally simple: for gleann-sound we just need to skip silence
+// This is intentionally simple: for gleann-plugin-sound we just need to skip silence
 // to avoid sending dead air to Whisper.  A more sophisticated VAD (e.g.
 // Silero-VAD) can be plugged in later by swapping this component.
 type VAD struct {
@@ -42,11 +47,13 @@ type VAD struct {
 }
 
 // DefaultVAD returns a VAD with sensible defaults for dictation use.
+// Thresholds are deliberately permissive — it's better to send a quiet
+// window to Whisper (which handles silence gracefully) than to miss speech.
 func DefaultVAD() *VAD {
 	return &VAD{
-		ThresholdMultiplier: 2.0,
-		MinAbsoluteEnergy:   150.0,
-		smoothingAlpha:      0.02,
+		ThresholdMultiplier: 1.4,
+		MinAbsoluteEnergy:   60.0,
+		smoothingAlpha:      0.008,
 	}
 }
 
@@ -72,13 +79,19 @@ func (v *VAD) IsSpeech(pcm []int16) bool {
 		return false
 	}
 
-	// Update exponential moving average of energy.
-	v.avgEnergy = v.smoothingAlpha*energy + (1.0-v.smoothingAlpha)*v.avgEnergy
-
 	// A frame is speech if its energy exceeds both the absolute floor AND the
-	// dynamic threshold derived from the running average.
+	// dynamic threshold derived from the running noise-floor average.
 	threshold := v.avgEnergy * v.ThresholdMultiplier
-	return energy > v.MinAbsoluteEnergy && energy > threshold
+	isSpeech := energy > v.MinAbsoluteEnergy && energy > threshold
+
+	// Only update the noise-floor estimate with non-speech frames.
+	// This prevents speech from inflating the average and causing
+	// subsequent speech frames to be rejected ("rising threshold" problem).
+	if !isSpeech {
+		v.avgEnergy = v.smoothingAlpha*energy + (1.0-v.smoothingAlpha)*v.avgEnergy
+	}
+
+	return isSpeech
 }
 
 // Reset clears the running average so the VAD re-calibrates on the next chunk.
@@ -87,6 +100,16 @@ func (v *VAD) Reset() {
 	defer v.mu.Unlock()
 	v.avgEnergy = 0
 	v.initialised = false
+}
+
+// Recalibrate performs a soft reset: halves the noise-floor estimate so the
+// VAD can re-adapt to changed ambient noise levels without losing all state.
+// This is less disruptive than a full Reset and is suitable for periodic
+// recalibration during long-running sessions.
+func (v *VAD) Recalibrate() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.avgEnergy *= 0.5
 }
 
 // ---------------------------------------------------------------------------

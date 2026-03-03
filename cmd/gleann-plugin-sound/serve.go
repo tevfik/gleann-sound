@@ -9,16 +9,16 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
-	"github.com/tevfik/gleann-sound/internal/audio"
-	"github.com/tevfik/gleann-sound/internal/core"
-	"github.com/tevfik/gleann-sound/internal/plugin"
+	"github.com/tevfik/gleann-plugin-sound/internal/audio"
+	"github.com/tevfik/gleann-plugin-sound/internal/core"
+	"github.com/tevfik/gleann-plugin-sound/internal/plugin"
 )
 
 // newServeCmd creates the "serve" subcommand (Mode 3: Daemon / Plugin).
 //
 // Usage:
 //
-//	gleann-sound serve --model models/ggml-base.en.bin --addr localhost:50051
+//	gleann-plugin-sound serve --model models/ggml-base.en.bin --addr localhost:50051
 //
 // Runs as a background daemon, exposing a local gRPC port.  The main gleann
 // application connects as a go-plugin host to send configurations and receive

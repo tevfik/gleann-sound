@@ -5,30 +5,59 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/tevfik/gleann-sound/internal/config"
+	"github.com/tevfik/gleann-plugin-sound/internal/config"
 )
 
 // ── Wizard phases ──────────────────────────────────────────────
+//
+// Onboarding order:
+//   models → download → backend → exec provider → default model →
+//   language → hotkey → gRPC → output → audio source → summary
+//
+// Reconfiguration (cfg.Completed):
+//   overview → (jump to any phase) → overview
 
 type setupPhase int
 
 const (
-	phaseModelSelect   setupPhase = iota // select models to download
-	phaseDownloading                     // downloading models
-	phaseDefaultModel                    // choose default model
-	phaseLanguage                        // language selection
-	phaseHotkey                          // hotkey configuration
-	phaseGRPC                            // gRPC server configuration
-	phaseBackend                         // backend selection (whisper / onnx)
-	phaseOutput                          // output directory for transcriptions
-	phaseAudioSource                     // audio source selection (mic / speaker / both)
-	phaseSummary                         // summary & confirm
+	phaseOverview          setupPhase = iota // settings overview (reconfigure mode)
+	phaseModelSelect                         // select models to download
+	phaseDownloading                         // downloading models
+	phaseBackend                             // backend selection (whisper / onnx)
+	phaseExecutionProvider                   // ONNX execution provider (auto / cuda / cpu)
+	phasePipInstall                          // pip install onnxruntime-gpu prompt
+	phaseDefaultModel                        // choose default model
+	phaseLanguage                            // language selection
+	phaseHotkey                              // hotkey configuration
+	phaseGRPC                                // gRPC server configuration
+	phaseOutput                              // output directory for transcriptions
+	phaseAudioSource                         // audio source selection (mic / speaker / both)
+	phaseSummary                             // summary & confirm
 )
+
+// onboardingOrder defines the sequential phase order for first-time setup.
+// Used by nextPhase/prevPhase to navigate the wizard.
+var onboardingOrder = []setupPhase{
+	phaseModelSelect,
+	phaseDownloading,
+	phaseBackend,
+	phaseExecutionProvider,
+	phasePipInstall,
+	phaseDefaultModel,
+	phaseLanguage,
+	phaseHotkey,
+	phaseGRPC,
+	phaseOutput,
+	phaseAudioSource,
+	phaseSummary,
+}
 
 // ── Messages ───────────────────────────────────────────────────
 
@@ -39,6 +68,35 @@ type downloadDoneMsg struct {
 
 type allDownloadsDoneMsg struct{}
 
+type onnxRTDownloadDoneMsg struct {
+	err error
+}
+
+type pipInstallDoneMsg struct {
+	libPath string
+	err     error
+}
+
+// ── Overview items ─────────────────────────────────────────────
+
+type overviewItem struct {
+	label string
+	phase setupPhase // which phase to jump to
+}
+
+var overviewItems = []overviewItem{
+	{"Models & Downloads", phaseModelSelect},
+	{"Backend", phaseBackend},
+	{"Execution Provider", phaseExecutionProvider},
+	{"Default Model", phaseDefaultModel},
+	{"Language", phaseLanguage},
+	{"Dictation Hotkey", phaseHotkey},
+	{"gRPC Server", phaseGRPC},
+	{"Output Directory", phaseOutput},
+	{"Audio Source", phaseAudioSource},
+	{"Save & Exit", phaseSummary},
+}
+
 // ── SetupModel ─────────────────────────────────────────────────
 
 type SetupModel struct {
@@ -47,6 +105,11 @@ type SetupModel struct {
 	height    int
 	cancelled bool
 	done      bool
+
+	// Overview mode (reconfiguration).
+	isReconfigure  bool       // true when cfg.Completed was true on entry
+	returnPhase    setupPhase // phase to return to after editing (-1 = follow wizard)
+	overviewCursor int        // cursor position in overview list
 
 	// Model selection (multi-select).
 	available   []config.WhisperModel
@@ -66,8 +129,8 @@ type SetupModel struct {
 	existingDefaultModel string // path from existing config, used for pre-filling cursor
 
 	// Language.
-	languages     []langOption
-	langCursor    int
+	languages  []langOption
+	langCursor int
 
 	// Hotkey (preset selection).
 	hotkeyPresets []hotkeyOption // available hotkey presets
@@ -87,6 +150,10 @@ type SetupModel struct {
 	// Output directory.
 	outputDir     string // output directory for transcription files
 	outputEditing bool   // user is editing the path
+
+	// Execution provider (ONNX).
+	providerOptions []string // available providers (auto, cuda, cpu)
+	providerCursor  int      // cursor position
 
 	// Audio source.
 	audioSourceOptions []string // available sources (mic, speaker, both)
@@ -139,6 +206,11 @@ func NewSetupModel(existingCfg *config.Config) SetupModel {
 	s.Style = lipgloss.NewStyle().Foreground(ColorSecondary)
 
 	available := config.AvailableModels()
+	// Append ONNX Runtime models.
+	available = append(available, config.AvailableONNXModels()...)
+	// Append Silero VAD as a downloadable model option.
+	available = append(available, config.SileroVADModel())
+
 	selected := make(map[int]bool)
 
 	// Pre-select already downloaded models.
@@ -156,9 +228,11 @@ func NewSetupModel(existingCfg *config.Config) SetupModel {
 	existingDefault := ""
 	grpcEnabled := false
 	grpcAddr := "localhost:50051"
-	backendCursor := 0 // 0 = whisper
+	backendCursor := 0  // 0 = whisper
+	providerCursor := 0 // 0 = auto
 	outputDir := "~/.gleann/transcriptions"
 	audioSourceCursor := 0 // 0 = mic
+	isReconfigure := false
 	if existingCfg != nil {
 		existingDefault = existingCfg.DefaultModel
 		if existingCfg.GRPCAddr != "" {
@@ -167,6 +241,12 @@ func NewSetupModel(existingCfg *config.Config) SetupModel {
 		}
 		if existingCfg.Backend == "onnx" {
 			backendCursor = 1
+		}
+		switch existingCfg.ExecutionProvider {
+		case "cuda":
+			providerCursor = 1
+		case "cpu":
+			providerCursor = 2
 		}
 		if existingCfg.OutputDir != "" {
 			outputDir = existingCfg.OutputDir
@@ -199,10 +279,23 @@ func NewSetupModel(existingCfg *config.Config) SetupModel {
 				hotkeyInput = existingCfg.Hotkey
 			}
 		}
+		isReconfigure = existingCfg.Completed
+
+		// Pre-populate installed models from existing config.
+		if isReconfigure && len(existingCfg.Models) > 0 {
+			// Use existing models list.
+		}
 	}
 
-	return SetupModel{
-		phase:                phaseModelSelect,
+	startPhase := setupPhase(phaseModelSelect)
+	if isReconfigure {
+		startPhase = phaseOverview
+	}
+
+	m := SetupModel{
+		phase:                startPhase,
+		isReconfigure:        isReconfigure,
+		returnPhase:          -1,
 		available:            available,
 		selected:             selected,
 		spinner:              s,
@@ -217,19 +310,129 @@ func NewSetupModel(existingCfg *config.Config) SetupModel {
 		grpcAddr:             grpcAddr,
 		backendOptions:       []string{"whisper", "onnx"},
 		backendCursor:        backendCursor,
+		providerOptions:      []string{"auto", "cuda", "cpu"},
+		providerCursor:       providerCursor,
 		outputDir:            outputDir,
 		audioSourceOptions:   []string{"mic", "speaker", "both"},
 		audioSourceCursor:    audioSourceCursor,
 	}
+
+	// In reconfigure mode, pre-populate installed models from config.
+	if isReconfigure && existingCfg != nil && len(existingCfg.Models) > 0 {
+		m.installedModels = existingCfg.Models
+		m.prefillDefaultCursor()
+	}
+
+	return m
 }
 
 func (m SetupModel) Init() tea.Cmd {
 	return m.spinner.Tick
 }
 
-func (m SetupModel) Cancelled() bool { return m.cancelled }
-func (m SetupModel) Done() bool      { return m.done }
-func (m SetupModel) Result() *config.Config { return m.result }
+func (m SetupModel) Cancelled() bool         { return m.cancelled }
+func (m SetupModel) Done() bool              { return m.done }
+func (m SetupModel) Result() *config.Config  { return m.result }
+
+// ── Phase navigation helpers ──────────────────────────────────
+
+// finishPhase is called when a phase's "enter" action completes.
+// In overview mode it returns to the overview; in onboarding mode it advances.
+func (m *SetupModel) finishPhase() {
+	if m.returnPhase == phaseOverview {
+		m.phase = phaseOverview
+		m.returnPhase = -1
+		return
+	}
+	// Onboarding: advance to next phase in sequence.
+	m.advanceOnboarding()
+}
+
+// advanceOnboarding moves to the next phase in onboarding order,
+// skipping phases that don't apply.
+func (m *SetupModel) advanceOnboarding() {
+	idx := -1
+	for i, p := range onboardingOrder {
+		if p == m.phase {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 || idx >= len(onboardingOrder)-1 {
+		m.phase = phaseSummary
+		return
+	}
+	next := onboardingOrder[idx+1]
+	// Skip download phase (handled by model select).
+	if next == phaseDownloading {
+		if idx+2 < len(onboardingOrder) {
+			next = onboardingOrder[idx+2]
+		}
+	}
+	// Skip ONNX-only phases if backend isn't onnx.
+	isONNX := m.backendOptions[m.backendCursor] == "onnx"
+	for !isONNX && (next == phaseExecutionProvider || next == phasePipInstall) {
+		idx++
+		if idx >= len(onboardingOrder)-1 {
+			next = phaseSummary
+			break
+		}
+		next = onboardingOrder[idx+1]
+	}
+	// Skip pip install if it doesn't apply (macOS, already installed, etc.).
+	if next == phasePipInstall && !needsPipInstall() {
+		idx++
+		if idx >= len(onboardingOrder)-1 {
+			next = phaseSummary
+		} else {
+			next = onboardingOrder[idx+1]
+		}
+	}
+	m.phase = next
+}
+
+// goBackOnboarding moves to the previous phase in onboarding order.
+func (m *SetupModel) goBackOnboarding() bool {
+	if m.returnPhase == phaseOverview {
+		m.phase = phaseOverview
+		m.returnPhase = -1
+		return true
+	}
+	idx := -1
+	for i, p := range onboardingOrder {
+		if p == m.phase {
+			idx = i
+			break
+		}
+	}
+	if idx <= 0 {
+		return false // at the start
+	}
+	prev := onboardingOrder[idx-1]
+	// Skip download phase.
+	if prev == phaseDownloading && idx >= 2 {
+		prev = onboardingOrder[idx-2]
+	}
+	// Skip pip install going backwards (user already decided or N/A).
+	if prev == phasePipInstall {
+		idx--
+		if idx >= 1 {
+			prev = onboardingOrder[idx-1]
+		}
+	}
+	// Skip execution provider if backend isn't onnx.
+	isONNX := m.backendOptions[m.backendCursor] == "onnx"
+	if !isONNX && prev == phaseExecutionProvider {
+		for j := idx - 1; j >= 0; j-- {
+			if onboardingOrder[j] != phaseExecutionProvider && onboardingOrder[j] != phaseDownloading && onboardingOrder[j] != phasePipInstall {
+				prev = onboardingOrder[j]
+				break
+			}
+		}
+	}
+	m.phase = prev
+	return true
+}
 
 // ── Update ─────────────────────────────────────────────────────
 
@@ -250,17 +453,20 @@ func (m SetupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.downloadErr = fmt.Sprintf("Failed to download %s: %v", msg.model.Name, msg.err)
 		} else {
 			m.downloaded = append(m.downloaded, msg.model.Name)
-			entry := config.ModelEntry{
-				Name: msg.model.Name,
-				Path: config.ModelPath(msg.model.FileName),
-				Size: msg.model.Size,
+			// Only add transcription models to installedModels (not VAD or other utilities).
+			if msg.model.Name != "silero-vad" {
+				entry := config.ModelEntry{
+					Name: msg.model.Name,
+					Path: config.ModelPath(msg.model.FileName),
+					Size: msg.model.Size,
+				}
+				if msg.model.Multilingual {
+					entry.Language = "multilingual"
+				} else {
+					entry.Language = "en"
+				}
+				m.installedModels = append(m.installedModels, entry)
 			}
-			if msg.model.Multilingual {
-				entry.Language = "multilingual"
-			} else {
-				entry.Language = "en"
-			}
-			m.installedModels = append(m.installedModels, entry)
 		}
 		// Download next in queue.
 		if len(m.downloadQ) > 0 {
@@ -276,8 +482,47 @@ func (m SetupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.phase = phaseModelSelect
 			return m, nil
 		}
+		// If ONNX backend is selected and runtime not installed, download it now.
+		if m.backendCursor < len(m.backendOptions) && m.backendOptions[m.backendCursor] == "onnx" && !config.IsONNXRuntimeDownloaded() {
+			m.downloading = fmt.Sprintf("ONNX Runtime v%s", config.ONNXRuntimeVersion)
+			return m, func() tea.Msg {
+				_, err := config.DownloadONNXRuntime()
+				return onnxRTDownloadDoneMsg{err: err}
+			}
+		}
 		m.prefillDefaultCursor()
-		m.phase = phaseDefaultModel
+		// After download, go to backend selection (onboarding) or overview (reconfig).
+		if m.returnPhase == phaseOverview {
+			m.phase = phaseOverview
+			m.returnPhase = -1
+		} else {
+			m.phase = phaseBackend
+		}
+		return m, nil
+
+	case onnxRTDownloadDoneMsg:
+		if msg.err != nil {
+			m.downloadErr = fmt.Sprintf("Failed to download ONNX Runtime: %v", msg.err)
+		} else {
+			m.downloaded = append(m.downloaded, fmt.Sprintf("ONNX Runtime v%s", config.ONNXRuntimeVersion))
+		}
+		m.prefillDefaultCursor()
+		if m.returnPhase == phaseOverview {
+			m.phase = phaseOverview
+			m.returnPhase = -1
+		} else {
+			m.phase = phaseBackend
+		}
+		return m, nil
+
+	case pipInstallDoneMsg:
+		if msg.err != nil {
+			m.downloadErr = fmt.Sprintf("pip install failed: %v", msg.err)
+		} else {
+			m.downloaded = append(m.downloaded, "onnxruntime-gpu (pip)")
+		}
+		m.downloading = ""
+		m.finishPhase()
 		return m, nil
 
 	case tea.KeyMsg:
@@ -291,11 +536,22 @@ func (m SetupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.hotkeyCustom = false
 				return m, nil
 			}
-			if m.phase > phaseModelSelect && m.phase != phaseDownloading {
-				m.phase--
-				if m.phase == phaseDownloading {
-					m.phase-- // skip download phase when going back
-				}
+			// In text editing modes, esc exits editing.
+			if m.phase == phaseGRPC && m.grpcEditing {
+				m.grpcEditing = false
+				return m, nil
+			}
+			if m.phase == phaseOutput && m.outputEditing {
+				m.outputEditing = false
+				return m, nil
+			}
+			// Overview: esc quits.
+			if m.phase == phaseOverview {
+				m.cancelled = true
+				return m, tea.Quit
+			}
+			// Go back.
+			if m.goBackOnboarding() {
 				return m, nil
 			}
 			m.cancelled = true
@@ -308,6 +564,8 @@ func (m SetupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m SetupModel) handlePhaseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.phase {
+	case phaseOverview:
+		return m.updateOverview(msg)
 	case phaseModelSelect:
 		return m.updateModelSelect(msg)
 	case phaseDefaultModel:
@@ -320,12 +578,42 @@ func (m SetupModel) handlePhaseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateGRPC(msg)
 	case phaseBackend:
 		return m.updateBackend(msg)
+	case phaseExecutionProvider:
+		return m.updateExecutionProvider(msg)
+	case phasePipInstall:
+		return m.updatePipInstall(msg)
 	case phaseOutput:
 		return m.updateOutput(msg)
 	case phaseAudioSource:
 		return m.updateAudioSource(msg)
 	case phaseSummary:
 		return m.updateSummary(msg)
+	}
+	return m, nil
+}
+
+// ── Overview (reconfigure mode) ────────────────────────────────
+
+func (m SetupModel) updateOverview(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		if m.overviewCursor > 0 {
+			m.overviewCursor--
+		}
+	case "down", "j":
+		if m.overviewCursor < len(overviewItems)-1 {
+			m.overviewCursor++
+		}
+	case "enter":
+		item := overviewItems[m.overviewCursor]
+		if item.phase == phaseSummary {
+			// "Save & Exit" — go directly to save.
+			m.done = true
+			m.result = m.buildConfig()
+			return m, tea.Quit
+		}
+		m.returnPhase = phaseOverview
+		m.phase = item.phase
 	}
 	return m, nil
 }
@@ -353,14 +641,14 @@ func (m SetupModel) updateModelSelect(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if len(queue) == 0 {
-			// All selected models already downloaded, skip to default.
+			// All selected models already downloaded, skip to next.
 			m.addPreExistingModels()
 			if len(m.installedModels) == 0 {
 				// Nothing selected at all.
 				return m, nil
 			}
 			m.prefillDefaultCursor()
-			m.phase = phaseDefaultModel
+			m.finishPhase()
 			return m, nil
 		}
 		m.downloadQ = queue[1:]
@@ -396,6 +684,10 @@ func (m *SetupModel) addPreExistingModels() {
 		if !m.selected[i] {
 			continue
 		}
+		// Skip non-transcription models (VAD etc).
+		if m.available[i].Name == "silero-vad" {
+			continue
+		}
 		if existing[m.available[i].Name] {
 			continue
 		}
@@ -418,17 +710,39 @@ func (m *SetupModel) addPreExistingModels() {
 // ── Default Model ──────────────────────────────────────────────
 
 func (m SetupModel) updateDefaultModel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	filtered := m.filteredInstalledModels()
+
+	// No matching models — redirect to model download on any key.
+	if len(filtered) == 0 {
+		if msg.String() == "enter" || msg.String() == "esc" {
+			m.returnPhase = phaseDefaultModel
+			m.phase = phaseModelSelect
+		}
+		return m, nil
+	}
+
 	switch msg.String() {
 	case "up", "k":
 		if m.defaultCursor > 0 {
 			m.defaultCursor--
 		}
 	case "down", "j":
-		if m.defaultCursor < len(m.installedModels)-1 {
+		if m.defaultCursor < len(filtered)-1 {
 			m.defaultCursor++
 		}
 	case "enter":
-		m.phase = phaseLanguage
+		// Store the selected model from filtered list back to the actual index.
+		if m.defaultCursor < len(filtered) {
+			selected := filtered[m.defaultCursor]
+			// Find actual index in full list so buildConfig uses the right entry.
+			for i, e := range m.installedModels {
+				if e.Name == selected.Name && e.Path == selected.Path {
+					m.defaultCursor = i
+					break
+				}
+			}
+		}
+		m.finishPhase()
 	}
 	return m, nil
 }
@@ -446,7 +760,7 @@ func (m SetupModel) updateLanguage(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.langCursor++
 		}
 	case "enter":
-		m.phase = phaseHotkey
+		m.finishPhase()
 	}
 	return m, nil
 }
@@ -460,7 +774,7 @@ func (m SetupModel) updateHotkey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch key {
 		case "enter":
 			if m.hotkeyInput != "" {
-				m.phase = phaseGRPC
+				m.finishPhase()
 			}
 		case "backspace":
 			if len(m.hotkeyInput) > 0 {
@@ -493,7 +807,7 @@ func (m SetupModel) updateHotkey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// "Custom…" selected — switch to text input.
 			m.hotkeyCustom = true
 		} else {
-			m.phase = phaseGRPC
+			m.finishPhase()
 		}
 	}
 	return m, nil
@@ -509,14 +823,11 @@ func (m SetupModel) updateGRPC(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "enter":
 			if m.grpcAddr != "" {
 				m.grpcEditing = false
-				m.phase = phaseBackend
 			}
 		case "backspace":
 			if len(m.grpcAddr) > 0 {
 				m.grpcAddr = m.grpcAddr[:len(m.grpcAddr)-1]
 			}
-		case "esc":
-			m.grpcEditing = false
 		default:
 			if len(key) == 1 && key[0] >= 32 && key[0] <= 126 {
 				m.grpcAddr += key
@@ -537,7 +848,7 @@ func (m SetupModel) updateGRPC(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !m.grpcEnabled {
 			m.grpcAddr = ""
 		}
-		m.phase = phaseBackend
+		m.finishPhase()
 	}
 	return m, nil
 }
@@ -555,7 +866,89 @@ func (m SetupModel) updateBackend(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.backendCursor++
 		}
 	case "enter":
-		m.phase = phaseOutput
+		// Reset default model cursor when backend changes — the filtered
+		// list will be different so the old cursor position is invalid.
+		m.defaultCursor = 0
+
+		// In onboarding: onnx → exec provider, whisper → skip to default model.
+		// In overview: onnx → exec provider, whisper → back to overview.
+		if m.backendOptions[m.backendCursor] == "onnx" {
+			if m.returnPhase == phaseOverview {
+				// Stay in overview flow but visit exec provider first.
+				m.phase = phaseExecutionProvider
+			} else {
+				m.phase = phaseExecutionProvider
+			}
+		} else {
+			m.finishPhase()
+		}
+	}
+	return m, nil
+}
+
+// ── Execution Provider ────────────────────────────────────────
+
+func (m SetupModel) updateExecutionProvider(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		if m.providerCursor > 0 {
+			m.providerCursor--
+		}
+	case "down", "j":
+		if m.providerCursor < len(m.providerOptions)-1 {
+			m.providerCursor++
+		}
+	case "enter":
+		provider := m.providerOptions[m.providerCursor]
+		// If CUDA or auto is selected and we need GPU runtime, go to pip install phase.
+		if (provider == "cuda" || provider == "auto") && needsPipInstall() {
+			m.phase = phasePipInstall
+			return m, nil
+		}
+		m.finishPhase()
+	}
+	return m, nil
+}
+
+// needsPipInstall checks if the pip install phase should be shown.
+// Returns true when: not macOS, GPU pip package exists, pip is available,
+// and no CUDA-capable library is already installed.
+func needsPipInstall() bool {
+	// macOS uses CoreML from base package — no separate GPU package.
+	if runtime.GOOS == "darwin" {
+		return false
+	}
+	// No GPU pip package for this platform.
+	if config.PipPackageForGPU() == "" {
+		return false
+	}
+	// Already have a CUDA-capable pip install.
+	if config.HasPipInstalledCUDAProvider() {
+		return false
+	}
+	return true
+}
+
+// ── Pip Install (GPU ONNX Runtime) ────────────────────────────
+
+func (m SetupModel) updatePipInstall(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y", "Y", "enter":
+		pipBin := config.FindPip()
+		if pipBin == "" {
+			m.downloadErr = fmt.Sprintf("pip not found. Install manually: pip install %s", config.PipPackageForGPU())
+			m.finishPhase()
+			return m, nil
+		}
+		m.downloading = config.PipPackageForGPU()
+		m.phase = phaseDownloading
+		return m, func() tea.Msg {
+			libPath, err := config.InstallONNXRuntimeGPUViaPip()
+			return pipInstallDoneMsg{libPath: libPath, err: err}
+		}
+	case "n", "N", "esc":
+		// Skip — continue with CPU-only.
+		m.finishPhase()
 	}
 	return m, nil
 }
@@ -569,14 +962,11 @@ func (m SetupModel) updateOutput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "enter":
 			if m.outputDir != "" {
 				m.outputEditing = false
-				m.phase = phaseAudioSource
 			}
 		case "backspace":
 			if len(m.outputDir) > 0 {
 				m.outputDir = m.outputDir[:len(m.outputDir)-1]
 			}
-		case "esc":
-			m.outputEditing = false
 		default:
 			if len(key) == 1 && key[0] >= 32 && key[0] <= 126 {
 				m.outputDir += key
@@ -589,7 +979,7 @@ func (m SetupModel) updateOutput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "e":
 		m.outputEditing = true
 	case "enter":
-		m.phase = phaseAudioSource
+		m.finishPhase()
 	}
 	return m, nil
 }
@@ -607,9 +997,23 @@ func (m SetupModel) updateAudioSource(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.audioSourceCursor++
 		}
 	case "enter":
-		m.phase = phaseSummary
+		m.finishPhase()
 	}
 	return m, nil
+}
+
+// filteredInstalledModels returns only models matching the current backend.
+// ONNX model names start with "onnx-"; whisper models do not.
+func (m SetupModel) filteredInstalledModels() []config.ModelEntry {
+	isOnnx := m.backendOptions[m.backendCursor] == "onnx"
+	var filtered []config.ModelEntry
+	for _, e := range m.installedModels {
+		modelIsOnnx := strings.HasPrefix(e.Name, "onnx-")
+		if isOnnx == modelIsOnnx {
+			filtered = append(filtered, e)
+		}
+	}
+	return filtered
 }
 
 // selectedHotkey returns the currently selected hotkey string.
@@ -641,7 +1045,21 @@ func (m SetupModel) updateSummary(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m SetupModel) buildConfig() *config.Config {
 	defaultModel := ""
 	if m.defaultCursor < len(m.installedModels) {
-		defaultModel = m.installedModels[m.defaultCursor].Path
+		candidate := m.installedModels[m.defaultCursor]
+		// Validate that the selected model matches the backend.
+		isOnnx := m.backendOptions[m.backendCursor] == "onnx"
+		modelIsOnnx := strings.HasPrefix(candidate.Name, "onnx-")
+		if isOnnx == modelIsOnnx {
+			defaultModel = candidate.Path
+		} else {
+			// Mismatch — pick the first compatible model instead.
+			for _, e := range m.installedModels {
+				if strings.HasPrefix(e.Name, "onnx-") == isOnnx {
+					defaultModel = e.Path
+					break
+				}
+			}
+		}
 	}
 
 	lang := ""
@@ -651,15 +1069,20 @@ func (m SetupModel) buildConfig() *config.Config {
 
 	hotkey := m.selectedHotkey()
 
+	backend := m.backendOptions[m.backendCursor]
+
 	cfg := &config.Config{
 		DefaultModel: defaultModel,
 		Language:      lang,
 		Hotkey:        hotkey,
 		Models:        m.installedModels,
-		Backend:       m.backendOptions[m.backendCursor],
+		Backend:       backend,
 		AudioSource:   m.audioSourceOptions[m.audioSourceCursor],
 		OutputDir:     m.outputDir,
 		Completed:     true,
+	}
+	if backend == "onnx" {
+		cfg.ExecutionProvider = m.providerOptions[m.providerCursor]
 	}
 	if m.grpcEnabled && m.grpcAddr != "" {
 		cfg.GRPCAddr = m.grpcAddr
@@ -676,55 +1099,96 @@ func downloadModel(model config.WhisperModel) tea.Cmd {
 			return downloadDoneMsg{model: model, err: err}
 		}
 
-		dest := config.ModelPath(model.FileName)
-
-		// Skip if already exists.
-		if _, err := os.Stat(dest); err == nil {
-			return downloadDoneMsg{model: model, err: nil}
+		// Multi-file bundle (ONNX models).
+		if model.IsBundle() {
+			return downloadBundle(model)
 		}
 
-		resp, err := http.Get(model.URL)
-		if err != nil {
-			return downloadDoneMsg{model: model, err: err}
-		}
-		defer resp.Body.Close()
+		// Single-file download (GGML, Silero VAD).
+		return downloadSingleFile(model)
+	}
+}
 
-		if resp.StatusCode != http.StatusOK {
-			return downloadDoneMsg{model: model, err: fmt.Errorf("HTTP %d", resp.StatusCode)}
-		}
+func downloadSingleFile(model config.WhisperModel) tea.Msg {
+	dest := config.ModelPath(model.FileName)
 
-		f, err := os.Create(dest + ".tmp")
-		if err != nil {
-			return downloadDoneMsg{model: model, err: err}
-		}
-
-		if _, err := io.Copy(f, resp.Body); err != nil {
-			f.Close()
-			os.Remove(dest + ".tmp")
-			return downloadDoneMsg{model: model, err: err}
-		}
-		f.Close()
-
-		if err := os.Rename(dest+".tmp", dest); err != nil {
-			return downloadDoneMsg{model: model, err: err}
-		}
-
+	// Skip if already exists.
+	if _, err := os.Stat(dest); err == nil {
 		return downloadDoneMsg{model: model, err: nil}
 	}
+
+	if err := httpDownload(model.URL, dest); err != nil {
+		return downloadDoneMsg{model: model, err: err}
+	}
+	return downloadDoneMsg{model: model, err: nil}
+}
+
+func downloadBundle(model config.WhisperModel) tea.Msg {
+	bundleDir := config.ModelPath(model.FileName)
+	if err := os.MkdirAll(bundleDir, 0o755); err != nil {
+		return downloadDoneMsg{model: model, err: err}
+	}
+
+	for _, bf := range model.BundleFiles {
+		dest := filepath.Join(bundleDir, bf.Name)
+		// Skip files already downloaded.
+		if _, err := os.Stat(dest); err == nil {
+			continue
+		}
+		if err := httpDownload(bf.URL, dest); err != nil {
+			return downloadDoneMsg{model: model, err: fmt.Errorf("%s: %w", bf.Name, err)}
+		}
+	}
+	return downloadDoneMsg{model: model, err: nil}
+}
+
+// httpDownload fetches a URL and writes it to dest atomically via a .tmp file.
+func httpDownload(url, dest string) error {
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("HTTP %d for %s", resp.StatusCode, url)
+	}
+
+	f, err := os.Create(dest + ".tmp")
+	if err != nil {
+		return err
+	}
+
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		f.Close()
+		os.Remove(dest + ".tmp")
+		return err
+	}
+	f.Close()
+
+	return os.Rename(dest+".tmp", dest)
 }
 
 // ── View ───────────────────────────────────────────────────────
 
 func (m SetupModel) View() string {
 	var b strings.Builder
-	b.WriteString(TitleStyle.Render(" gleann-sound Setup "))
+	b.WriteString(TitleStyle.Render(" gleann-plugin-sound Setup "))
 	b.WriteString("\n\n")
 
 	switch m.phase {
+	case phaseOverview:
+		b.WriteString(m.viewOverview())
 	case phaseModelSelect:
 		b.WriteString(m.viewModelSelect())
 	case phaseDownloading:
 		b.WriteString(m.viewDownloading())
+	case phaseBackend:
+		b.WriteString(m.viewBackend())
+	case phaseExecutionProvider:
+		b.WriteString(m.viewExecutionProvider())
+	case phasePipInstall:
+		b.WriteString(m.viewPipInstall())
 	case phaseDefaultModel:
 		b.WriteString(m.viewDefaultModel())
 	case phaseLanguage:
@@ -733,8 +1197,6 @@ func (m SetupModel) View() string {
 		b.WriteString(m.viewHotkey())
 	case phaseGRPC:
 		b.WriteString(m.viewGRPC())
-	case phaseBackend:
-		b.WriteString(m.viewBackend())
 	case phaseOutput:
 		b.WriteString(m.viewOutput())
 	case phaseAudioSource:
@@ -746,9 +1208,119 @@ func (m SetupModel) View() string {
 	return b.String()
 }
 
+// ── Overview view ─────────────────────────────────────────────
+
+func (m SetupModel) viewOverview() string {
+	var b strings.Builder
+	b.WriteString("  Settings:\n")
+	b.WriteString("  " + lipgloss.NewStyle().Foreground(ColorDimFg).Render("Select a setting to change, or Save & Exit") + "\n\n")
+
+	// Current values for display.
+	values := m.overviewValues()
+
+	for i, item := range overviewItems {
+		cursor := "  "
+		if i == m.overviewCursor {
+			cursor = "▸ "
+		}
+
+		// Skip execution provider row when backend isn't onnx.
+		if item.phase == phaseExecutionProvider && m.backendOptions[m.backendCursor] != "onnx" {
+			continue
+		}
+
+		if item.phase == phaseSummary {
+			// Save & Exit gets special styling.
+			label := cursor + item.label
+			if i == m.overviewCursor {
+				b.WriteString(SuccessBadge.Render("  " + label))
+			} else {
+				b.WriteString(NormalItemStyle.Render(label))
+			}
+			b.WriteString("\n")
+			continue
+		}
+
+		val := values[item.phase]
+		label := fmt.Sprintf("%s%-20s %s", cursor, item.label, lipgloss.NewStyle().Foreground(ColorSecondary).Render(val))
+		if i == m.overviewCursor {
+			b.WriteString(ActiveItemStyle.Render(label))
+		} else {
+			b.WriteString(NormalItemStyle.Render(label))
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n")
+	b.WriteString(StatusBarStyle.Render("  ↑/↓ navigate • enter edit • esc quit"))
+	return b.String()
+}
+
+func (m SetupModel) overviewValues() map[setupPhase]string {
+	vals := make(map[setupPhase]string)
+
+	// Models
+	modelNames := make([]string, 0, len(m.installedModels))
+	for _, e := range m.installedModels {
+		modelNames = append(modelNames, e.Name)
+	}
+	if len(modelNames) == 0 {
+		vals[phaseModelSelect] = "(none)"
+	} else if len(modelNames) > 3 {
+		vals[phaseModelSelect] = fmt.Sprintf("%s +%d more", strings.Join(modelNames[:3], ", "), len(modelNames)-3)
+	} else {
+		vals[phaseModelSelect] = strings.Join(modelNames, ", ")
+	}
+
+	// Backend
+	vals[phaseBackend] = m.backendOptions[m.backendCursor]
+
+	// Exec provider
+	vals[phaseExecutionProvider] = m.providerOptions[m.providerCursor]
+
+	// Default model (show from filtered list matching backend)
+	filtered := m.filteredInstalledModels()
+	if m.defaultCursor < len(m.installedModels) {
+		vals[phaseDefaultModel] = m.installedModels[m.defaultCursor].Name
+	} else if len(filtered) > 0 {
+		vals[phaseDefaultModel] = filtered[0].Name
+	} else {
+		vals[phaseDefaultModel] = "(no matching models)"
+	}
+
+	// Language
+	if m.langCursor < len(m.languages) && m.languages[m.langCursor].code != "" {
+		vals[phaseLanguage] = m.languages[m.langCursor].name
+	} else {
+		vals[phaseLanguage] = "auto-detect"
+	}
+
+	// Hotkey
+	vals[phaseHotkey] = m.selectedHotkey()
+
+	// gRPC
+	if m.grpcEnabled && m.grpcAddr != "" {
+		vals[phaseGRPC] = m.grpcAddr
+	} else {
+		vals[phaseGRPC] = "disabled"
+	}
+
+	// Output
+	if m.outputDir != "" {
+		vals[phaseOutput] = m.outputDir
+	} else {
+		vals[phaseOutput] = "(not set)"
+	}
+
+	// Audio source
+	vals[phaseAudioSource] = m.audioSourceOptions[m.audioSourceCursor]
+
+	return vals
+}
+
 func (m SetupModel) viewModelSelect() string {
 	var b strings.Builder
-	b.WriteString("  Select Whisper models to download:\n")
+	b.WriteString("  Select models to download:\n")
 	b.WriteString("  " + lipgloss.NewStyle().Foreground(ColorDimFg).Render("(space to toggle, enter to continue)") + "\n\n")
 
 	for i, model := range m.available {
@@ -806,11 +1378,109 @@ func (m SetupModel) viewDownloading() string {
 	return b.String()
 }
 
+func (m SetupModel) viewBackend() string {
+	var b strings.Builder
+	b.WriteString("  Select transcription backend:\n")
+	b.WriteString("  " + lipgloss.NewStyle().Foreground(ColorDimFg).Render("whisper.cpp (CPU) or ONNX Runtime (CPU/GPU)") + "\n\n")
+
+	descriptions := map[string]string{
+		"whisper": "whisper.cpp — CPU-only, low latency, no extra deps",
+		"onnx":    "ONNX Runtime — CPU/GPU, requires libonnxruntime",
+	}
+
+	for i, opt := range m.backendOptions {
+		cursor := "  "
+		if i == m.backendCursor {
+			cursor = "▸ "
+		}
+		label := descriptions[opt]
+		if label == "" {
+			label = opt
+		}
+		if i == m.backendCursor {
+			b.WriteString(ActiveItemStyle.Render(cursor + label))
+		} else {
+			b.WriteString(NormalItemStyle.Render(cursor + label))
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n")
+	b.WriteString(StatusBarStyle.Render("  ↑/↓ navigate • enter select • esc back"))
+	return b.String()
+}
+
+func (m SetupModel) viewExecutionProvider() string {
+	var b strings.Builder
+	b.WriteString("  ONNX Execution Provider:\n")
+	b.WriteString("  " + lipgloss.NewStyle().Foreground(ColorDimFg).Render("Choose hardware acceleration for ONNX inference") + "\n\n")
+
+	descriptions := map[string]string{
+		"auto": "Auto — Try CUDA first, fall back to CPU",
+		"cuda": "CUDA — NVIDIA GPU acceleration (requires CUDA toolkit)",
+		"cpu":  "CPU — No GPU required, works everywhere",
+	}
+
+	for i, opt := range m.providerOptions {
+		cursor := "  "
+		if i == m.providerCursor {
+			cursor = "▸ "
+		}
+		label := descriptions[opt]
+		if label == "" {
+			label = opt
+		}
+		if i == m.providerCursor {
+			b.WriteString(ActiveItemStyle.Render(cursor + label))
+		} else {
+			b.WriteString(NormalItemStyle.Render(cursor + label))
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n")
+	b.WriteString(StatusBarStyle.Render("  ↑/↓ navigate • enter select • esc back"))
+	return b.String()
+}
+
+func (m SetupModel) viewPipInstall() string {
+	var b strings.Builder
+	pkg := config.PipPackageForGPU()
+	b.WriteString("  GPU ONNX Runtime:\n")
+	b.WriteString("  " + lipgloss.NewStyle().Foreground(ColorDimFg).Render(
+		"GPU acceleration requires the "+pkg+" pip package") + "\n\n")
+
+	pipBin := config.FindPip()
+	if pipBin == "" {
+		b.WriteString(lipgloss.NewStyle().Foreground(ColorError).Render(
+			"  pip not found on this system.") + "\n")
+		b.WriteString("  Install manually:\n\n")
+		b.WriteString("    pip install " + pkg + "\n\n")
+		b.WriteString(StatusBarStyle.Render("  enter/n skip • esc back"))
+	} else {
+		b.WriteString(fmt.Sprintf("  Command: %s install --target ~/.gleann/lib/onnxrt-pip %s\n\n", pipBin, pkg))
+		b.WriteString("  Install GPU-accelerated ONNX Runtime via pip?\n\n")
+		b.WriteString(ActiveItemStyle.Render("  y") + " install  " + NormalItemStyle.Render("n") + " skip (CPU-only)\n\n")
+		b.WriteString(StatusBarStyle.Render("  y install • n skip • esc back"))
+	}
+	return b.String()
+}
+
 func (m SetupModel) viewDefaultModel() string {
 	var b strings.Builder
-	b.WriteString("  Select default model:\n\n")
+	backend := m.backendOptions[m.backendCursor]
+	b.WriteString(fmt.Sprintf("  Select default model (%s):\n\n", backend))
 
-	for i, model := range m.installedModels {
+	filtered := m.filteredInstalledModels()
+
+	if len(filtered) == 0 {
+		b.WriteString(ErrorBadge.Render(fmt.Sprintf("  No %s models installed. Download a matching model first.", backend)))
+		b.WriteString("\n\n")
+		b.WriteString(StatusBarStyle.Render("  esc go back to download models"))
+		return b.String()
+	}
+
+	for i, model := range filtered {
 		cursor := "  "
 		if i == m.defaultCursor {
 			cursor = "▸ "
@@ -951,38 +1621,6 @@ func (m SetupModel) viewGRPC() string {
 	return b.String()
 }
 
-func (m SetupModel) viewBackend() string {
-	var b strings.Builder
-	b.WriteString("  Select transcription backend:\n")
-	b.WriteString("  " + lipgloss.NewStyle().Foreground(ColorDimFg).Render("whisper.cpp (CPU) or ONNX Runtime (CPU/GPU)") + "\n\n")
-
-	descriptions := map[string]string{
-		"whisper":  "whisper.cpp — CPU-only, low latency, no extra deps",
-		"onnx":     "ONNX Runtime — CPU/GPU, requires libonnxruntime",
-	}
-
-	for i, opt := range m.backendOptions {
-		cursor := "  "
-		if i == m.backendCursor {
-			cursor = "▸ "
-		}
-		label := descriptions[opt]
-		if label == "" {
-			label = opt
-		}
-		if i == m.backendCursor {
-			b.WriteString(ActiveItemStyle.Render(cursor + label))
-		} else {
-			b.WriteString(NormalItemStyle.Render(cursor + label))
-		}
-		b.WriteString("\n")
-	}
-
-	b.WriteString("\n")
-	b.WriteString(StatusBarStyle.Render("  ↑/↓ navigate • enter select • esc back"))
-	return b.String()
-}
-
 func (m SetupModel) viewOutput() string {
 	var b strings.Builder
 	b.WriteString("  Output Directory:\n")
@@ -1087,12 +1725,17 @@ func (m SetupModel) viewSummary() string {
 		{"Language", lang},
 		{"Dictation Hotkey", hotkey},
 		{"Backend", backend},
-		{"Audio Source", audioSource},
-		{"Output Directory", outputDir},
-		{"gRPC Server", grpcStatus},
-		{"Models Installed", fmt.Sprintf("%d", len(m.installedModels))},
-		{"Config Path", config.ConfigPath()},
 	}
+	if backend == "onnx" {
+		items = append(items, struct{ k, v string }{"Exec Provider", m.providerOptions[m.providerCursor]})
+	}
+	items = append(items,
+		struct{ k, v string }{"Audio Source", audioSource},
+		struct{ k, v string }{"Output Directory", outputDir},
+		struct{ k, v string }{"gRPC Server", grpcStatus},
+		struct{ k, v string }{"Models Installed", fmt.Sprintf("%d", len(m.installedModels))},
+		struct{ k, v string }{"Config Path", config.ConfigPath()},
+	)
 
 	for _, item := range items {
 		b.WriteString(fmt.Sprintf("  %s  %s\n",

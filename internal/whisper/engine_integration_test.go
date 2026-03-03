@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tevfik/gleann-sound/internal/whisper"
+	"github.com/tevfik/gleann-plugin-sound/internal/whisper"
 )
 
 // TestEngine_TranscribeFile_JFK verifies that the whisper engine can

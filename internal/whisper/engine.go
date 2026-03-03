@@ -34,15 +34,16 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/tevfik/gleann-sound/internal/audio"
-	"github.com/tevfik/gleann-sound/internal/core"
+	"github.com/tevfik/gleann-plugin-sound/internal/audio"
+	"github.com/tevfik/gleann-plugin-sound/internal/core"
 )
 
 // ---------------------------------------------------------------------------
 // Engine — CGO whisper.cpp implementation
 // ---------------------------------------------------------------------------
 
-// Engine wraps a whisper.cpp context and exposes it through core.Transcriber.
+// Engine wraps a whisper.cpp context and exposes it through core.Transcriber
+// and core.StreamingTranscriber.
 //
 // It is NOT safe for concurrent use; the caller must serialise calls or create
 // multiple Engine instances.
@@ -55,10 +56,15 @@ type Engine struct {
 	// Reusable float buffer to avoid repeated allocations.
 	// Sized to hold up to 30s of audio at 16 kHz.
 	floatBuf []float32
+
+	// streamPrompt holds the previous window's transcription text for
+	// context carryover in streaming mode (used as initial_prompt).
+	streamPrompt string
 }
 
-// Compile-time interface check.
+// Compile-time interface checks.
 var _ core.Transcriber = (*Engine)(nil)
+var _ core.StreamingTranscriber = (*Engine)(nil)
 
 func init() {
 	core.RegisterBackend("whisper", func(model string) (core.Transcriber, error) {
@@ -107,7 +113,7 @@ func (e *Engine) TranscribeStream(ctx context.Context, pcmData []int16) (string,
 	result := strings.TrimSpace(sb.String())
 
 	// Final safety net: detect repetitive decoder-loop output.
-	if isRepetitive(result) {
+	if core.IsRepetitive(result) {
 		log.Printf("[whisper] repetitive output detected and discarded: %q", truncate(result, 80))
 		return "", nil
 	}
@@ -232,13 +238,13 @@ func (e *Engine) TranscribeStreamSegments(ctx context.Context, pcmData []int16) 
 		}
 
 		// Skip known whisper hallucination patterns (common on silence/noise).
-		if isHallucination(text) {
+		if core.IsHallucination(text) {
 			log.Printf("[whisper] segment %d skipped: hallucination pattern text=%q", i, text)
 			continue
 		}
 
 		// Skip repetitive decoder-loop output.
-		if isRepetitive(text) {
+		if core.IsRepetitive(text) {
 			log.Printf("[whisper] segment %d skipped: repetitive text=%q", i, truncate(text, 60))
 			continue
 		}
@@ -253,82 +259,143 @@ func (e *Engine) TranscribeStreamSegments(ctx context.Context, pcmData []int16) 
 	return segments, nil
 }
 
-// isHallucination returns true if the text matches known whisper hallucination
-// patterns that commonly appear when processing silence or noise.
-func isHallucination(text string) bool {
-	lower := strings.ToLower(strings.TrimSpace(text))
-	for _, pattern := range hallucinationPatterns {
-		if strings.Contains(lower, pattern) {
-			return true
+// TranscribeWindow processes a single sliding window of PCM data with context
+// from the previous transcription.  The promptText carries the prior window's
+// output to condition the decoder (set as initial_prompt in whisper.cpp).
+//
+// Returns the transcription result and the prompt text to carry forward.
+func (e *Engine) TranscribeWindow(ctx context.Context, pcmData []int16, promptText string) (core.StreamResult, string, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if len(pcmData) == 0 {
+		return core.StreamResult{}, promptText, nil
+	}
+
+	// Convert int16 → float32 in [-1, 1].
+	n := len(pcmData)
+	if cap(e.floatBuf) < n {
+		e.floatBuf = make([]float32, n)
+	} else {
+		e.floatBuf = e.floatBuf[:n]
+	}
+	for i, s := range pcmData {
+		e.floatBuf[i] = float32(s) / 32768.0
+	}
+
+	params := C.whisper_full_default_params(C.WHISPER_SAMPLING_GREEDY)
+	params.print_progress = C.bool(false)
+	params.print_special = C.bool(false)
+	params.print_realtime = C.bool(false)
+	params.print_timestamps = C.bool(false)
+	params.single_segment = C.bool(false)
+	params.suppress_blank = C.bool(true)
+	params.suppress_nst = C.bool(true)
+	params.max_tokens = 64
+	params.entropy_thold = 2.2
+	params.logprob_thold = -1.0
+	params.temperature = 0.0
+	params.temperature_inc = 0.0
+
+	nCPU := runtime.NumCPU()
+	if nCPU > 16 {
+		nCPU = 16
+	}
+	if nCPU < 1 {
+		nCPU = 1
+	}
+	params.n_threads = C.int(nCPU)
+
+	// Language.
+	if e.lang != "" {
+		cLang := C.CString(e.lang)
+		defer C.free(unsafe.Pointer(cLang))
+		params.language = cLang
+	} else {
+		params.language = nil
+	}
+
+	// Context carryover: use previous window's text as initial prompt.
+	// This conditions the decoder to continue naturally from the prior output.
+	if promptText != "" {
+		params.no_context = C.bool(false)
+		cPrompt := C.CString(promptText)
+		defer C.free(unsafe.Pointer(cPrompt))
+		params.initial_prompt = cPrompt
+		log.Printf("[whisper] streaming window with prompt: %q", truncate(promptText, 60))
+	} else {
+		params.no_context = C.bool(true)
+	}
+
+	log.Printf("[whisper] streaming window: %d samples (%.2fs)",
+		n, float64(n)/float64(audio.WhisperSampleRate))
+
+	ret := C.whisper_full(e.ctx, params, (*C.float)(unsafe.Pointer(&e.floatBuf[0])), C.int(n))
+	if ret != 0 {
+		return core.StreamResult{}, promptText, fmt.Errorf("whisper: inference failed (code %d)", int(ret))
+	}
+
+	// Collect segments with per-segment timestamps for deduplication.
+	nSeg := int(C.whisper_full_n_segments(e.ctx))
+	var sb strings.Builder
+	var segments []core.Segment
+	for i := 0; i < nSeg; i++ {
+		t0 := int64(C.whisper_full_get_segment_t0(e.ctx, C.int(i))) * 10 // centiseconds → ms
+		t1 := int64(C.whisper_full_get_segment_t1(e.ctx, C.int(i))) * 10
+		text := C.GoString(C.whisper_full_get_segment_text(e.ctx, C.int(i)))
+		text = strings.TrimSpace(text)
+
+		if len([]rune(text)) < 2 {
+			continue
+		}
+		noSpeechProb := float64(C.whisper_full_get_segment_no_speech_prob(e.ctx, C.int(i)))
+		if noSpeechProb > 0.6 {
+			continue
+		}
+		if core.IsHallucination(text) || core.IsRepetitive(text) {
+			continue
+		}
+		segments = append(segments, core.Segment{
+			Start: time.Duration(t0) * time.Millisecond,
+			End:   time.Duration(t1) * time.Millisecond,
+			Text:  text,
+		})
+		if sb.Len() > 0 {
+			sb.WriteString(" ")
+		}
+		sb.WriteString(text)
+	}
+
+	resultText := strings.TrimSpace(sb.String())
+	durSec := float64(n) / float64(audio.WhisperSampleRate)
+
+	result := core.StreamResult{
+		Text:     resultText,
+		Segments: segments,
+		End:      time.Duration(durSec * float64(time.Second)),
+	}
+
+	// Carry forward: use the last portion of this transcription as prompt
+	// for the next window.  Keep short (~50 chars) to reduce decoder bias
+	// and prompt poisoning risk.
+	nextPrompt := resultText
+	if len(nextPrompt) > 50 {
+		nextPrompt = nextPrompt[len(nextPrompt)-50:]
+		// Trim to word boundary.
+		if idx := strings.Index(nextPrompt, " "); idx >= 0 {
+			nextPrompt = nextPrompt[idx+1:]
 		}
 	}
-	return false
+
+	return result, nextPrompt, nil
 }
 
-// hallucinationPatterns lists common whisper hallucination strings that appear
-// when the model processes silence, noise, or very short audio. These are
-// well-documented in the whisper community across multiple languages.
-var hallucinationPatterns = []string{
-	// Turkish
-	"altyazı",
-	"izlediğiniz için teşekkür",
-	"teşekkür ederim",
-	"abone olmayı unutmayın",
-	"abone olun",
-	"beğenmeyi unutmayın",
-	"bir sonraki videoda",
-	"görüşmek üzere",
-	"videoyu beğenmeyi",
-	// English
-	"thank you for watching",
-	"thanks for watching",
-	"please subscribe",
-	"like and subscribe",
-	"thank you for listening",
-	"see you in the next",
-	"don't forget to subscribe",
-	// German
-	"danke fürs zuschauen",
-	"danke für das anschauen",
-	"bis zum nächsten",
-	// Common patterns (language-agnostic)
-	"www.",
-	"http",
-	"[music]",
-	"[müzik]",
-	"[applause]",
-	"♪",
-}
-
-// isRepetitive detects decoder-loop output where a short phrase is repeated
-// many times (e.g. "bir amca yaparbir amca yaparbir amca yapar...").
-// Returns true if the text contains a repeating pattern ≥3 times.
-func isRepetitive(text string) bool {
-	if len(text) < 12 {
-		return false
-	}
-	runes := []rune(text)
-	n := len(runes)
-	// Check pattern lengths from 2 to n/3 runes.
-	maxPatLen := n / 3
-	if maxPatLen > 40 {
-		maxPatLen = 40
-	}
-	for patLen := 2; patLen <= maxPatLen; patLen++ {
-		pattern := string(runes[:patLen])
-		count := 0
-		for i := 0; i+patLen <= n; i += patLen {
-			if string(runes[i:i+patLen]) == pattern {
-				count++
-			} else {
-				break
-			}
-		}
-		if count >= 3 {
-			return true
-		}
-	}
-	return false
+// ResetStream clears accumulated streaming context.
+func (e *Engine) ResetStream() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.streamPrompt = ""
+	log.Println("[whisper] stream context reset")
 }
 
 // TranscribeFile transcribes an audio/video file by first converting it to

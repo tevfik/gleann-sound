@@ -1,7 +1,7 @@
-# gleann-sound
+# gleann-plugin-sound
 
-[![CI](https://github.com/tevfik/gleann-sound/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tevfik/gleann-sound/actions/workflows/ci.yml)
-[![Release](https://github.com/tevfik/gleann-sound/actions/workflows/release.yml/badge.svg?event=push)](https://github.com/tevfik/gleann-sound/actions/workflows/release.yml)
+[![CI](https://github.com/tevfik/gleann-plugin-sound/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tevfik/gleann-plugin-sound/actions/workflows/ci.yml)
+[![Release](https://github.com/tevfik/gleann-plugin-sound/actions/workflows/release.yml/badge.svg?event=push)](https://github.com/tevfik/gleann-plugin-sound/actions/workflows/release.yml)
 
 Audio processing companion daemon/plugin for the [gleann](https://github.com/tevfik/gleann) vector database. Captures audio, runs local [whisper.cpp](https://github.com/ggerganov/whisper.cpp) or [ONNX Runtime](https://onnxruntime.ai/) inference, and delivers transcriptions — as CLI output, streaming gRPC events, or injected keystrokes for voice dictation.
 
@@ -57,7 +57,7 @@ All audio is processed **locally** — no cloud APIs required.
 │  Optional: + gRPC server (--addr)                         │
 ├──────────────────────────────────────────────────────────┤
 │  Config (~/.gleann/sound.json)                            │
-│  TUI (bubbletea) │ gRPC Plugin (go-plugin)                │
+│  TUI (bubbletea) │ gRPC Plugin │ HTTP Plugin (gleann build)│
 │  Daemon (systemd / launchd / schtasks)                    │
 └──────────────────────────────────────────────────────────┘
 ```
@@ -82,8 +82,8 @@ Requires **Go 1.24+** and **ffmpeg** (for file transcription mode).
 ### 2. Clone & Build
 
 ```bash
-git clone https://github.com/tevfik/gleann-sound.git
-cd gleann-sound
+git clone https://github.com/tevfik/gleann-plugin-sound.git
+cd gleann-plugin-sound
 
 # Build whisper.cpp (CPU-only, ~2 min)
 make whisper-setup
@@ -93,7 +93,7 @@ make whisper-model                         # default: base.en (~142 MB)
 make whisper-model MODEL_SIZE=small-q5_1   # quantized, ~181 MB ★★
 make whisper-model MODEL_SIZE=large-v3-turbo-q5_0  # best quantized, ~547 MB
 
-# Build gleann-sound
+# Build gleann-plugin-sound
 make build
 
 # Or build with ONNX Runtime support
@@ -106,7 +106,7 @@ make build-all
 ### 3. Interactive Setup (Recommended)
 
 ```bash
-./build/gleann-sound tui
+./build/gleann-plugin-sound tui
 ```
 
 The TUI wizard guides you through:
@@ -121,11 +121,11 @@ The TUI wizard guides you through:
 
 ### 4. Setup Input Device Access (Linux)
 
-For dictation mode, gleann-sound reads keyboard events via evdev. You need to be in the `input` group:
+For dictation mode, gleann-plugin-sound reads keyboard events via evdev. You need to be in the `input` group:
 
 ```bash
 # Option A: Use the TUI installer
-./build/gleann-sound tui
+./build/gleann-plugin-sound tui
 # → Select "Install" → Enable "Setup input group"
 
 # Option B: Use make
@@ -141,7 +141,7 @@ sudo usermod -aG input $USER
 Run the built-in diagnostic to verify all components work:
 
 ```bash
-gleann-sound test
+gleann-plugin-sound test
 ```
 
 Tests: microphone capture → hotkey detection → whisper transcription → keyboard injection.
@@ -150,29 +150,116 @@ Tests: microphone capture → hotkey detection → whisper transcription → key
 
 ```bash
 # With config (uses saved defaults from ~/.gleann/sound.json)
-gleann-sound dictate
+gleann-plugin-sound dictate
 
 # With explicit flags (overrides config)
-gleann-sound dictate --key "ctrl+shift+space" --model ~/.gleann/models/ggml-small-q5_1.bin --language tr
+gleann-plugin-sound dictate --key "ctrl+shift+space" --model ~/.gleann/models/ggml-small-q5_1.bin --language tr
 
 # With gRPC server alongside dictation
-gleann-sound dictate --key "ctrl+shift+space" --addr localhost:50051
+gleann-plugin-sound dictate --key "ctrl+shift+space" --addr localhost:50051
 
 # As a background daemon (auto-starts at login)
-gleann-sound tui → Install → "Start dictate daemon at login"
+gleann-plugin-sound tui → Install → "Start dictate daemon at login"
 ```
 
 ## Execution Modes
 
 | Mode | Command | Description |
 |------|---------|-------------|
-| **Transcribe** | `gleann-sound transcribe` | On-demand file transcription via ffmpeg → Whisper |
-| **Listen** | `gleann-sound listen` | Live microphone streaming with VAD, JSON output |
-| **Serve** | `gleann-sound serve` | Background gRPC daemon for gleann integration |
-| **Dictate** | `gleann-sound dictate` | Push-to-talk with async transcription + keystroke injection |
-| **Dictate+gRPC** | `gleann-sound dictate --addr :50051` | Dictation + gRPC server in same process |
-| **TUI** | `gleann-sound tui` | Interactive setup, install, daemon management, and diagnostics |
-| **Test** | `gleann-sound test` | Diagnostic: mic, hotkey, whisper, keyboard |
+| **Transcribe** | `gleann-plugin-sound transcribe` | On-demand file transcription via ffmpeg → Whisper |
+| **Listen** | `gleann-plugin-sound listen` | Live microphone streaming with VAD, JSON output |
+| **Serve** | `gleann-plugin-sound serve` | Background gRPC daemon for gleann integration |
+| **Dictate** | `gleann-plugin-sound dictate` | Push-to-talk with async transcription + keystroke injection |
+| **Dictate+gRPC** | `gleann-plugin-sound dictate --addr :50051` | Dictation + gRPC server in same process |
+| **TUI** | `gleann-plugin-sound tui` | Interactive setup, install, daemon management, and diagnostics |
+| **Test** | `gleann-plugin-sound test` | Diagnostic: mic, hotkey, whisper, keyboard |
+| **Plugin Serve** | `gleann-plugin-sound plugin-serve` | HTTP server for gleann build integration |
+| **Install** | `gleann-plugin-sound install` | Register as a gleann plugin |
+
+## Plugin Integration (gleann build)
+
+gleann-plugin-sound can act as a **document-extraction plugin** for the main [gleann](https://github.com/tevfik/gleann) application. When registered, `gleann build` automatically transcribes audio/video files and indexes them alongside your text documents.
+
+### How it works
+
+```
+gleann build my-vault --docs ~/Documents/
+    │
+    ├── notes.md      → read directly, chunk, embed
+    ├── report.pdf    → gleann-docs plugin extracts text
+    └── meeting.mp3   → gleann-plugin-sound plugin transcribes audio
+            │
+            ├─ 1. gleann POSTs the file to http://localhost:8766/convert
+            ├─ 2. gleann-plugin-sound saves to temp, decodes via ffmpeg
+            ├─ 3. Whisper inference → timestamped segments
+            ├─ 4. Segments formatted as markdown:
+            │     "# Transcription: meeting.mp3
+            │      [00:00 - 00:15] First segment text.
+            │      [00:15 - 00:32] Second segment text."
+            ├─ 5. Returns {"markdown": "..."} as JSON
+            └─ 6. gleann chunks the markdown and indexes it
+```
+
+No files are created on disk — all data flows in-memory over HTTP. The temp file for ffmpeg is deleted immediately after transcription.
+
+### Supported formats
+
+`.mp3`, `.wav`, `.m4a`, `.flac`, `.ogg`, `.webm`, `.mp4`, `.mkv`, `.avi`
+
+Requires **ffmpeg** on `$PATH` for audio decoding.
+
+### Quick setup
+
+```bash
+# 1. Build (if not already done)
+make build
+
+# 2. Register as a gleann plugin
+./build/gleann-plugin-sound install
+
+# 3. Done! gleann build now transcribes audio files automatically
+gleann build my-vault --docs ~/Documents/
+```
+
+### What `install` does
+
+The `install` command writes an entry to `~/.gleann/plugins.json`:
+
+```json
+{
+  "name": "gleann-plugin-sound",
+  "url": "http://localhost:8766",
+  "command": ["/path/to/gleann-plugin-sound", "plugin-serve", "--port", "8766",
+              "--model", "/home/user/.gleann/models/ggml-small-q5_1.bin",
+              "--backend", "whisper", "--language", "tr"],
+  "capabilities": ["document-extraction"],
+  "extensions": [".mp3", ".wav", ".m4a", ".flac", ".ogg", ".webm", ".mp4", ".mkv", ".avi"]
+}
+```
+
+- Binary path is resolved automatically via `os.Executable()`
+- Model, backend, and language are read from `~/.gleann/sound.json` (set via `gleann-plugin-sound tui`)
+- If the plugin is offline when gleann needs it, the PluginManager auto-starts it using the stored command
+
+### `plugin-serve` command
+
+Runs the HTTP server that gleann communicates with:
+
+```bash
+# Uses defaults from config
+gleann-plugin-sound plugin-serve
+
+# Override port or language
+gleann-plugin-sound plugin-serve --port 8766 --language tr
+```
+
+The model is loaded **lazily** on the first `/convert` request, so the server starts instantly and health checks pass immediately.
+
+### Notes
+
+- **Timeout**: gleann's PluginManager has a 30-second HTTP timeout per file. Files up to ~5 minutes transcribe within this limit. For longer files, use `gleann-plugin-sound transcribe --file` separately.
+- **Concurrency**: The Whisper engine is not thread-safe. Concurrent requests from gleann's parallel workers are serialised via mutex.
+- **Separate from gRPC**: The `plugin-serve` command (HTTP, for batch indexing) is independent from the `serve` command (gRPC, for live streaming/dictation).
 
 ## Usage
 
@@ -181,16 +268,16 @@ gleann-sound tui → Install → "Start dictate daemon at login"
 Transcribe any audio/video file to timestamped JSONL (requires ffmpeg):
 
 ```bash
-gleann-sound transcribe --file recording.mp3 --model models/ggml-base.en.bin
+gleann-plugin-sound transcribe --file recording.mp3 --model models/ggml-base.en.bin
 ```
 
 Output is written to both stdout and a file (default: `<input>.jsonl`):
 ```bash
 # Custom output path
-gleann-sound transcribe --file recording.mp3 -o result.jsonl
+gleann-plugin-sound transcribe --file recording.mp3 -o result.jsonl
 
 # Using ONNX backend
-gleann-sound transcribe --file recording.mp3 --backend onnx --model models/whisper-base.en-onnx/
+gleann-plugin-sound transcribe --file recording.mp3 --backend onnx --model models/whisper-base.en-onnx/
 ```
 
 Output:
@@ -204,10 +291,10 @@ Output:
 Stream live microphone transcription to stdout with VAD:
 
 ```bash
-gleann-sound listen --model models/ggml-base.en.bin --language tr
+gleann-plugin-sound listen --model models/ggml-base.en.bin --language tr
 
 # Save output to file (also prints to stdout)
-gleann-sound listen --model models/ggml-base.en.bin -o transcription.jsonl
+gleann-plugin-sound listen --model models/ggml-base.en.bin -o transcription.jsonl
 ```
 
 ### gRPC Daemon
@@ -215,7 +302,7 @@ gleann-sound listen --model models/ggml-base.en.bin -o transcription.jsonl
 Run as a background daemon for gleann integration:
 
 ```bash
-gleann-sound serve --model models/ggml-base.en.bin --addr localhost:50051
+gleann-plugin-sound serve --model models/ggml-base.en.bin --addr localhost:50051
 ```
 
 ### Voice Dictation
@@ -223,13 +310,13 @@ gleann-sound serve --model models/ggml-base.en.bin --addr localhost:50051
 Push-to-talk dictation — hold the hotkey to speak, release to transcribe and inject as keystrokes:
 
 ```bash
-gleann-sound dictate --key "ctrl+shift+space" --model models/ggml-small-q5_1.bin --language tr
+gleann-plugin-sound dictate --key "ctrl+shift+space" --model models/ggml-small-q5_1.bin --language tr
 ```
 
 **With gRPC server**: Add `--addr` to run a gRPC server alongside dictation. This allows the main gleann application to connect over gRPC while dictation continues normally:
 
 ```bash
-gleann-sound dictate --key "ctrl+shift+space" --addr localhost:50051
+gleann-plugin-sound dictate --key "ctrl+shift+space" --addr localhost:50051
 ```
 
 **Async pipeline**: Transcription and injection run in the background. You can press the hotkey again immediately while the previous recording is still being transcribed.
@@ -244,7 +331,7 @@ Supported trigger keys: `space`, `a-z`, `0-9`, `f1-f12`
 Run a quick check of all components:
 
 ```bash
-gleann-sound test --key "ctrl+shift+space" --model ~/.gleann/models/ggml-base.bin
+gleann-plugin-sound test --key "ctrl+shift+space" --model ~/.gleann/models/ggml-base.bin
 ```
 
 Tests:
@@ -256,7 +343,7 @@ Tests:
 ### Interactive TUI
 
 ```bash
-gleann-sound tui
+gleann-plugin-sound tui
 ```
 
 The TUI provides these screens:
@@ -269,29 +356,29 @@ The TUI provides these screens:
 
 ## Daemon Management
 
-gleann-sound can run as a background daemon that starts automatically at login:
+gleann-plugin-sound can run as a background daemon that starts automatically at login:
 
 ```bash
 # Install via TUI
-gleann-sound tui → Install → "Start dictate daemon at login"
+gleann-plugin-sound tui → Install → "Start dictate daemon at login"
 
 # Check status (Linux)
-systemctl --user status gleann-sound-dictate.service
+systemctl --user status gleann-plugin-sound-dictate.service
 
 # View logs
-journalctl --user -u gleann-sound-dictate.service -f
+journalctl --user -u gleann-plugin-sound-dictate.service -f
 
 # Manual control
-systemctl --user stop gleann-sound-dictate.service
-systemctl --user start gleann-sound-dictate.service
-systemctl --user restart gleann-sound-dictate.service
+systemctl --user stop gleann-plugin-sound-dictate.service
+systemctl --user start gleann-plugin-sound-dictate.service
+systemctl --user restart gleann-plugin-sound-dictate.service
 ```
 
 | OS | Backend | Service Location |
 |----|---------|-----------------|
-| Linux | systemd user service | `~/.config/systemd/user/gleann-sound-dictate.service` |
+| Linux | systemd user service | `~/.config/systemd/user/gleann-plugin-sound-dictate.service` |
 | macOS | launchd agent | `~/Library/LaunchAgents/com.gleann.sound.dictate.plist` |
-| Windows | Scheduled Task | `gleann-sound-dictate` task |
+| Windows | Scheduled Task | `gleann-plugin-sound-dictate` task |
 
 The daemon reads all settings from `~/.gleann/sound.json` — no command-line flags needed (except `--verbose` for debug logging).
 
@@ -324,13 +411,13 @@ Configuration is stored in `~/.gleann/sound.json` and created by the TUI setup w
 
 ```bash
 # Uses config defaults
-gleann-sound dictate
+gleann-plugin-sound dictate
 
 # Override model from config
-gleann-sound dictate --model /path/to/other-model.bin
+gleann-plugin-sound dictate --model /path/to/other-model.bin
 
 # Override language
-gleann-sound listen --language en
+gleann-plugin-sound listen --language en
 ```
 
 ### Shell Completions
@@ -339,8 +426,83 @@ Install via the TUI installer, or manually:
 
 ```bash
 # The TUI "Install" screen handles bash, zsh, and fish automatically.
-# Or use: gleann-sound tui → Install → Shell completions
+# Or use: gleann-plugin-sound tui → Install → Shell completions
 ```
+
+## ONNX Runtime Backend
+
+The ONNX Runtime backend enables GPU-accelerated inference via CUDA, DirectML, or CoreML.
+
+### CPU (Default — Automatic)
+
+No manual setup needed. When you select the ONNX backend, the TUI setup wizard (or the engine at first run) automatically downloads the CPU-only ONNX Runtime library to `~/.gleann/lib/`.
+
+```bash
+# Build with ONNX support
+make build-onnx
+
+# The runtime library is downloaded automatically on first use
+gleann-plugin-sound listen --backend onnx --model ~/.gleann/models/whisper-base-onnx/
+```
+
+### GPU — NVIDIA CUDA (Linux / Windows)
+
+For GPU acceleration, install the CUDA-enabled ONNX Runtime via pip:
+
+```bash
+# Linux / Windows — CUDA 12.x
+pip install onnxruntime-gpu
+```
+
+The TUI setup wizard will also offer to install this automatically when you select CUDA or Auto as the execution provider.
+
+After installation, set the execution provider in your config or via the TUI:
+
+```json
+{
+  "backend": "onnx",
+  "execution_provider": "auto"
+}
+```
+
+| Provider | Behaviour |
+|----------|-----------|
+| `auto` | Try CUDA first, fall back to CPU |
+| `cuda` | Force CUDA — fails if not available |
+| `cpu` | Force CPU-only inference |
+
+### GPU — DirectML (Windows)
+
+An alternative to CUDA on Windows, works with most GPUs (AMD, Intel, NVIDIA):
+
+```bash
+pip install onnxruntime-directml
+```
+
+### GPU — CoreML (macOS)
+
+No separate package needed. The base ONNX Runtime already includes CoreML support on macOS. Select `auto` as the execution provider to use it.
+
+### Custom Library Path
+
+If you installed ONNX Runtime to a non-standard location, point to it via environment variable or `LD_LIBRARY_PATH`:
+
+```bash
+# Direct path to the shared library
+export ORT_LIB_PATH=/path/to/libonnxruntime.so
+
+# Or add the directory to LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=/path/to/onnxruntime/lib:$LD_LIBRARY_PATH
+```
+
+The library discovery order is:
+1. `ORT_LIB_PATH` / `ORT_SHARED_LIBRARY_PATH` environment variables
+2. `~/.gleann/lib/` (auto-downloaded or pip-installed)
+3. System library paths (`/usr/lib/`, `/usr/local/lib/`)
+4. `LD_LIBRARY_PATH` entries
+5. Python site-packages
+
+CUDA-capable builds (with `libonnxruntime_providers_cuda.so` alongside) are preferred over CPU-only builds.
 
 ## Available Whisper Models
 
@@ -382,12 +544,12 @@ Quantized models are **2-3× smaller** and **significantly faster** with minimal
 ### Via TUI (Recommended)
 
 ```bash
-./build/gleann-sound tui
+./build/gleann-plugin-sound tui
 # → Select "Install"
 ```
 
 This will:
-- Copy binary to `~/.local/bin/gleann-sound`
+- Copy binary to `~/.local/bin/gleann-plugin-sound`
 - Install shell completions for bash, zsh, fish
 - Setup udev rules and input group for keyboard access
 - Optionally install daemon for auto-start at login
@@ -406,7 +568,7 @@ make setup-input
 
 ```bash
 # Copy binary
-cp ./build/gleann-sound ~/.local/bin/
+cp ./build/gleann-plugin-sound ~/.local/bin/
 
 # Ensure ~/.local/bin is in PATH
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
@@ -415,15 +577,17 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 ## Project Structure
 
 ```
-gleann-sound/
-├── cmd/gleann-sound/          # CLI entry point (cobra)
+gleann-plugin-sound/
+├── cmd/gleann-plugin-sound/          # CLI entry point (cobra)
 │   ├── main.go                # Root command, version, global flags, config loading
 │   ├── transcribe.go          # Mode 1: file transcription (--output)
 │   ├── listen.go              # Mode 2: live streaming (--output)
 │   ├── serve.go               # Mode 3: gRPC daemon
 │   ├── dictate.go             # Mode 4: push-to-talk dictation (async, optional gRPC)
 │   ├── test.go                # Mode 5: diagnostic test command
-│   └── tui.go                 # Mode 6: interactive TUI
+│   ├── tui.go                 # Mode 6: interactive TUI
+│   ├── plugin_serve.go        # HTTP server for gleann plugin integration
+│   └── install.go             # Register as gleann plugin (~/.gleann/plugins.json)
 ├── internal/
 │   ├── config/                # Configuration management
 │   │   └── config.go          # Load/Save, model catalog (full + quantized)
@@ -453,8 +617,10 @@ gleann-sound/
 │   │   ├── setup.go           # Setup wizard (models, language, hotkey, backend, output, gRPC)
 │   │   ├── install.go         # Install/Uninstall + daemon management
 │   │   └── styles.go          # Lipgloss theme & ASCII logo
-│   └── plugin/                # gRPC server
-│       └── grpc_server.go     # Plugin server for gleann integration
+│   ├── httpserver/            # HTTP plugin server (gleann build integration)
+│   │   └── server.go          # /health + /convert endpoints
+│   └── plugin/                # gRPC server (live streaming)
+│       └── grpc_server.go     # gRPC plugin server for gleann integration
 ├── .github/workflows/
 │   ├── ci.yml                 # Test + build on push/PR (stub + whisper + onnx)
 │   └── release.yml            # Tag-triggered release builds
@@ -507,7 +673,7 @@ go test ./internal/plugin/ -v
 make lint
 
 # Hardware diagnostic
-./build/gleann-sound test
+./build/gleann-plugin-sound test
 ```
 
 ## Tech Stack
@@ -563,7 +729,7 @@ make lint
 
 **Fix**: Re-install the daemon via the TUI (it now captures your session's display variables):
 ```bash
-gleann-sound tui → Install → "Start dictate daemon at login"
+gleann-plugin-sound tui → Install → "Start dictate daemon at login"
 ```
 
 Or manually check:
@@ -571,7 +737,7 @@ Or manually check:
 echo "DISPLAY=$DISPLAY"
 echo "XAUTHORITY=$XAUTHORITY"
 # Compare with the service file:
-cat ~/.config/systemd/user/gleann-sound-dictate.service
+cat ~/.config/systemd/user/gleann-plugin-sound-dictate.service
 ```
 
 ### Repeated/garbled dictation output
@@ -603,7 +769,7 @@ If you still see this, try a larger model (e.g. `small-q5_1` instead of `base`).
 
 ### Hotkey not detected
 
-**Symptom**: `gleann-sound test` works but daemon doesn't respond to hotkey.
+**Symptom**: `gleann-plugin-sound test` works but daemon doesn't respond to hotkey.
 
 **Fix**: Check if another application captures the same hotkey combo. On Ubuntu, IBus uses `Ctrl+Space` by default:
 ```bash
@@ -627,7 +793,7 @@ sudo usermod -aG input $USER
 
 **Symptom**: Transcription returns blank/silence.
 
-**Fix**: Check your microphone with `gleann-sound test` and adjust PulseAudio volume:
+**Fix**: Check your microphone with `gleann-plugin-sound test` and adjust PulseAudio volume:
 ```bash
 pavucontrol  # GUI
 # or

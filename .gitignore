@@ -1,8 +1,9 @@
 # Build output
 build/
 
-# Whisper models (large binary files)
+# Whisper and ONNX models (large binary files)
 models/*.bin
+models/*.onnx
 
 # Coverage
 coverage.out

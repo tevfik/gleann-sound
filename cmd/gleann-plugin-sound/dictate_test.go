@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/tevfik/gleann-sound/internal/hotkey"
+	"github.com/tevfik/gleann-plugin-sound/internal/hotkey"
 )
 
 // ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/tevfik/gleann-sound/internal/config"
+	"github.com/tevfik/gleann-plugin-sound/internal/config"
 )
 
 // ── Install Model ──────────────────────────────────────────────
@@ -54,7 +54,7 @@ func NewInstallModel() InstallModel {
 	return InstallModel{
 		phase: installConfirm,
 		options: []installOpt{
-			{label: "Copy binary to ~/.local/bin", desc: "Install gleann-sound to PATH", selected: true},
+			{label: "Copy binary to ~/.local/bin", desc: "Install gleann-plugin-sound to PATH", selected: true},
 			{label: "Shell completions", desc: "bash, zsh, fish autocompletion", selected: true},
 			{label: "Setup input group", desc: "udev rules for evdev keyboard access (requires sudo)", selected: true},
 			{label: "Start dictate daemon at login", desc: "Auto-start push-to-talk on login (systemd/launchd/schtasks)", selected: daemonPreSelected},
@@ -67,7 +67,7 @@ func NewUninstallModel() InstallModel {
 		phase:     installConfirm,
 		uninstall: true,
 		options: []installOpt{
-			{label: "Remove binary from ~/.local/bin", desc: "Uninstall gleann-sound", selected: true},
+			{label: "Remove binary from ~/.local/bin", desc: "Uninstall gleann-plugin-sound", selected: true},
 			{label: "Remove shell completions", desc: "Remove bash, zsh, fish completions", selected: true},
 			{label: "Stop & remove dictate daemon", desc: "Remove auto-start service", selected: true},
 			{label: "Remove config", desc: "Delete ~/.gleann/sound.json", selected: false},
@@ -150,7 +150,7 @@ func (m *InstallModel) runInstall() {
 		if err := installBinary(); err != nil {
 			m.log = append(m.log, fmt.Sprintf("✗ Binary install: %v", err))
 		} else {
-			m.log = append(m.log, "✓ Binary installed to ~/.local/bin/gleann-sound")
+			m.log = append(m.log, "✓ Binary installed to ~/.local/bin/gleann-plugin-sound")
 		}
 	}
 
@@ -188,7 +188,7 @@ func (m *InstallModel) runInstall() {
 	if cfg == nil {
 		cfg = &config.Config{}
 	}
-	cfg.InstallPath = filepath.Join(expandPath("~/.local/bin"), "gleann-sound")
+	cfg.InstallPath = filepath.Join(expandPath("~/.local/bin"), "gleann-plugin-sound")
 	cfg.CompletionsInstalled = m.options[1].selected
 	cfg.InputGroupSetup = m.options[2].selected
 	cfg.DaemonEnabled = m.options[3].selected
@@ -198,7 +198,7 @@ func (m *InstallModel) runInstall() {
 func (m *InstallModel) runUninstall() {
 	// Option 0: Remove binary.
 	if m.options[0].selected {
-		path := filepath.Join(expandPath("~/.local/bin"), "gleann-sound")
+		path := filepath.Join(expandPath("~/.local/bin"), "gleann-plugin-sound")
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			m.log = append(m.log, fmt.Sprintf("✗ Remove binary: %v", err))
 		} else {
@@ -261,7 +261,7 @@ func installBinary() error {
 		return fmt.Errorf("resolve symlinks: %w", err)
 	}
 
-	dst := filepath.Join(targetDir, "gleann-sound")
+	dst := filepath.Join(targetDir, "gleann-plugin-sound")
 	if runtime.GOOS == "windows" {
 		dst += ".exe"
 	}
@@ -298,7 +298,7 @@ func installCompletions() []string {
 	// Bash
 	bashDir := filepath.Join(home, ".local", "share", "bash-completion", "completions")
 	if err := os.MkdirAll(bashDir, 0o755); err == nil {
-		path := filepath.Join(bashDir, "gleann-sound")
+		path := filepath.Join(bashDir, "gleann-plugin-sound")
 		if err := os.WriteFile(path, []byte(bashCompletion()), 0o644); err == nil {
 			installed = append(installed, "bash → "+path)
 		}
@@ -307,7 +307,7 @@ func installCompletions() []string {
 	// Zsh
 	zshDir := filepath.Join(home, ".local", "share", "zsh", "site-functions")
 	if err := os.MkdirAll(zshDir, 0o755); err == nil {
-		path := filepath.Join(zshDir, "_gleann-sound")
+		path := filepath.Join(zshDir, "_gleann-plugin-sound")
 		if err := os.WriteFile(path, []byte(zshCompletion()), 0o644); err == nil {
 			installed = append(installed, "zsh  → "+path)
 		}
@@ -316,7 +316,7 @@ func installCompletions() []string {
 	// Fish
 	fishDir := filepath.Join(home, ".config", "fish", "completions")
 	if err := os.MkdirAll(fishDir, 0o755); err == nil {
-		path := filepath.Join(fishDir, "gleann-sound.fish")
+		path := filepath.Join(fishDir, "gleann-plugin-sound.fish")
 		if err := os.WriteFile(path, []byte(fishCompletion()), 0o644); err == nil {
 			installed = append(installed, "fish → "+path)
 		}
@@ -330,9 +330,9 @@ func removeCompletions() []string {
 	home, _ := os.UserHomeDir()
 
 	paths := []struct{ shell, path string }{
-		{"bash", filepath.Join(home, ".local", "share", "bash-completion", "completions", "gleann-sound")},
-		{"zsh", filepath.Join(home, ".local", "share", "zsh", "site-functions", "_gleann-sound")},
-		{"fish", filepath.Join(home, ".config", "fish", "completions", "gleann-sound.fish")},
+		{"bash", filepath.Join(home, ".local", "share", "bash-completion", "completions", "gleann-plugin-sound")},
+		{"zsh", filepath.Join(home, ".local", "share", "zsh", "site-functions", "_gleann-plugin-sound")},
+		{"fish", filepath.Join(home, ".config", "fish", "completions", "gleann-plugin-sound.fish")},
 	}
 
 	for _, p := range paths {
@@ -352,7 +352,7 @@ func setupInputGroup() error {
 
 	// Create udev rule.
 	rule := `KERNEL=="event*", SUBSYSTEM=="input", MODE="0660", GROUP="input", TAG+="uaccess"`
-	cmd := exec.Command("sudo", "tee", "/etc/udev/rules.d/99-gleann-sound-input.rules")
+	cmd := exec.Command("sudo", "tee", "/etc/udev/rules.d/99-gleann-plugin-sound-input.rules")
 	cmd.Stdin = strings.NewReader(rule)
 	cmd.Stdout = nil
 	if err := cmd.Run(); err != nil {
@@ -425,13 +425,13 @@ func removeDaemon() error {
 func isDaemonRunning() bool {
 	switch runtime.GOOS {
 	case "linux":
-		out, err := exec.Command("systemctl", "--user", "is-active", "gleann-sound-dictate.service").Output()
+		out, err := exec.Command("systemctl", "--user", "is-active", "gleann-plugin-sound-dictate.service").Output()
 		return err == nil && strings.TrimSpace(string(out)) == "active"
 	case "darwin":
 		err := exec.Command("launchctl", "list", "com.gleann.sound.dictate").Run()
 		return err == nil
 	case "windows":
-		err := exec.Command("schtasks", "/Query", "/TN", "gleann-sound-dictate").Run()
+		err := exec.Command("schtasks", "/Query", "/TN", "gleann-plugin-sound-dictate").Run()
 		return err == nil
 	}
 	return false
@@ -469,7 +469,7 @@ func installSystemdService(binPath string, args []string) error {
 	}
 
 	unit := fmt.Sprintf(`[Unit]
-Description=gleann-sound dictation daemon
+Description=gleann-plugin-sound dictation daemon
 After=graphical-session.target
 PartOf=graphical-session.target
 
@@ -483,19 +483,19 @@ RestartSec=5
 WantedBy=default.target
 `, execStart, envLines)
 
-	servicePath := filepath.Join(serviceDir, "gleann-sound-dictate.service")
+	servicePath := filepath.Join(serviceDir, "gleann-plugin-sound-dictate.service")
 	if err := os.WriteFile(servicePath, []byte(unit), 0o644); err != nil {
 		return fmt.Errorf("write service file: %w", err)
 	}
 
 	_ = exec.Command("systemctl", "--user", "daemon-reload").Run()
-	if err := exec.Command("systemctl", "--user", "enable", "gleann-sound-dictate.service").Run(); err != nil {
+	if err := exec.Command("systemctl", "--user", "enable", "gleann-plugin-sound-dictate.service").Run(); err != nil {
 		return fmt.Errorf("enable service: %w", err)
 	}
 	// Stop first so that "start" actually launches the new binary.
 	// Without this, "start" is a no-op on an already-active service.
-	_ = exec.Command("systemctl", "--user", "stop", "gleann-sound-dictate.service").Run()
-	if err := exec.Command("systemctl", "--user", "start", "gleann-sound-dictate.service").Run(); err != nil {
+	_ = exec.Command("systemctl", "--user", "stop", "gleann-plugin-sound-dictate.service").Run()
+	if err := exec.Command("systemctl", "--user", "start", "gleann-plugin-sound-dictate.service").Run(); err != nil {
 		return fmt.Errorf("start service: %w", err)
 	}
 
@@ -503,10 +503,10 @@ WantedBy=default.target
 }
 
 func removeSystemdService() error {
-	_ = exec.Command("systemctl", "--user", "stop", "gleann-sound-dictate.service").Run()
-	_ = exec.Command("systemctl", "--user", "disable", "gleann-sound-dictate.service").Run()
+	_ = exec.Command("systemctl", "--user", "stop", "gleann-plugin-sound-dictate.service").Run()
+	_ = exec.Command("systemctl", "--user", "disable", "gleann-plugin-sound-dictate.service").Run()
 
-	servicePath := expandPath("~/.config/systemd/user/gleann-sound-dictate.service")
+	servicePath := expandPath("~/.config/systemd/user/gleann-plugin-sound-dictate.service")
 	if err := os.Remove(servicePath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove service file: %w", err)
 	}
@@ -546,9 +546,9 @@ func installLaunchdPlist(binPath string, args []string) error {
 		<false/>
 	</dict>
 	<key>StandardOutPath</key>
-	<string>/tmp/gleann-sound-dictate.log</string>
+	<string>/tmp/gleann-plugin-sound-dictate.log</string>
 	<key>StandardErrorPath</key>
-	<string>/tmp/gleann-sound-dictate.err</string>
+	<string>/tmp/gleann-plugin-sound-dictate.err</string>
 </dict>
 </plist>`, progArgs)
 
@@ -583,7 +583,7 @@ func installWindowsTask(binPath string, args []string) error {
 	}
 
 	cmd := exec.Command("schtasks", "/Create",
-		"/TN", "gleann-sound-dictate",
+		"/TN", "gleann-plugin-sound-dictate",
 		"/TR", fullCmd,
 		"/SC", "ONLOGON",
 		"/RL", "LIMITED",
@@ -592,13 +592,13 @@ func installWindowsTask(binPath string, args []string) error {
 		return fmt.Errorf("create scheduled task: %w", err)
 	}
 
-	_ = exec.Command("schtasks", "/Run", "/TN", "gleann-sound-dictate").Run()
+	_ = exec.Command("schtasks", "/Run", "/TN", "gleann-plugin-sound-dictate").Run()
 	return nil
 }
 
 func removeWindowsTask() error {
-	_ = exec.Command("schtasks", "/End", "/TN", "gleann-sound-dictate").Run()
-	cmd := exec.Command("schtasks", "/Delete", "/TN", "gleann-sound-dictate", "/F")
+	_ = exec.Command("schtasks", "/End", "/TN", "gleann-plugin-sound-dictate").Run()
+	cmd := exec.Command("schtasks", "/Delete", "/TN", "gleann-plugin-sound-dictate", "/F")
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("delete scheduled task: %w", err)
 	}
@@ -608,7 +608,7 @@ func removeWindowsTask() error {
 // ── Completion scripts ─────────────────────────────────────────
 
 func bashCompletion() string {
-	return `# gleann-sound bash completion
+	return `# gleann-plugin-sound bash completion
 _gleann_sound() {
     local cur prev commands
     COMPREPLY=()
@@ -617,7 +617,7 @@ _gleann_sound() {
     commands="transcribe listen serve dictate tui help"
 
     case "${prev}" in
-        gleann-sound)
+        gleann-plugin-sound)
             COMPREPLY=( $(compgen -W "${commands}" -- "${cur}") )
             return 0
             ;;
@@ -647,13 +647,13 @@ _gleann_sound() {
         COMPREPLY=( $(compgen -W "--model --verbose --help" -- "${cur}") )
     fi
 }
-complete -F _gleann_sound gleann-sound
+complete -F _gleann_sound gleann-plugin-sound
 `
 }
 
 func zshCompletion() string {
-	return `#compdef gleann-sound
-# gleann-sound zsh completion
+	return `#compdef gleann-plugin-sound
+# gleann-plugin-sound zsh completion
 
 _gleann_sound() {
     local -a commands
@@ -675,7 +675,7 @@ _gleann_sound() {
 
     case "$state" in
         cmds)
-            _describe -t commands 'gleann-sound command' commands
+            _describe -t commands 'gleann-plugin-sound command' commands
             ;;
         args)
             case "${words[1]}" in
@@ -716,32 +716,32 @@ _gleann_sound "$@"
 }
 
 func fishCompletion() string {
-	return `# gleann-sound fish completion
-complete -c gleann-sound -n '__fish_use_subcommand' -a transcribe -d 'Transcribe an audio file to text'
-complete -c gleann-sound -n '__fish_use_subcommand' -a listen -d 'Continuous real-time transcription'
-complete -c gleann-sound -n '__fish_use_subcommand' -a serve -d 'Start gRPC server for gleann plugin'
-complete -c gleann-sound -n '__fish_use_subcommand' -a dictate -d 'Push-to-talk dictation with hotkey'
-complete -c gleann-sound -n '__fish_use_subcommand' -a tui -d 'Open interactive setup & config'
-complete -c gleann-sound -n '__fish_use_subcommand' -a help -d 'Help about any command'
+	return `# gleann-plugin-sound fish completion
+complete -c gleann-plugin-sound -n '__fish_use_subcommand' -a transcribe -d 'Transcribe an audio file to text'
+complete -c gleann-plugin-sound -n '__fish_use_subcommand' -a listen -d 'Continuous real-time transcription'
+complete -c gleann-plugin-sound -n '__fish_use_subcommand' -a serve -d 'Start gRPC server for gleann plugin'
+complete -c gleann-plugin-sound -n '__fish_use_subcommand' -a dictate -d 'Push-to-talk dictation with hotkey'
+complete -c gleann-plugin-sound -n '__fish_use_subcommand' -a tui -d 'Open interactive setup & config'
+complete -c gleann-plugin-sound -n '__fish_use_subcommand' -a help -d 'Help about any command'
 
 # Global flags
-complete -c gleann-sound -l model -d 'Path to whisper model' -r -F
-complete -c gleann-sound -l verbose -d 'Enable verbose logging'
-complete -c gleann-sound -l help -d 'Show help'
+complete -c gleann-plugin-sound -l model -d 'Path to whisper model' -r -F
+complete -c gleann-plugin-sound -l verbose -d 'Enable verbose logging'
+complete -c gleann-plugin-sound -l help -d 'Show help'
 
 # transcribe
-complete -c gleann-sound -n '__fish_seen_subcommand_from transcribe' -l file -d 'Audio file to transcribe' -r -F
-complete -c gleann-sound -n '__fish_seen_subcommand_from transcribe' -l language -d 'Whisper language code' -r
+complete -c gleann-plugin-sound -n '__fish_seen_subcommand_from transcribe' -l file -d 'Audio file to transcribe' -r -F
+complete -c gleann-plugin-sound -n '__fish_seen_subcommand_from transcribe' -l language -d 'Whisper language code' -r
 
 # listen
-complete -c gleann-sound -n '__fish_seen_subcommand_from listen' -l language -d 'Whisper language code' -r
+complete -c gleann-plugin-sound -n '__fish_seen_subcommand_from listen' -l language -d 'Whisper language code' -r
 
 # serve
-complete -c gleann-sound -n '__fish_seen_subcommand_from serve' -l addr -d 'gRPC listen address' -r
+complete -c gleann-plugin-sound -n '__fish_seen_subcommand_from serve' -l addr -d 'gRPC listen address' -r
 
 # dictate
-complete -c gleann-sound -n '__fish_seen_subcommand_from dictate' -l key -d 'Hotkey combination' -r
-complete -c gleann-sound -n '__fish_seen_subcommand_from dictate' -l language -d 'Whisper language code' -r
+complete -c gleann-plugin-sound -n '__fish_seen_subcommand_from dictate' -l key -d 'Hotkey combination' -r
+complete -c gleann-plugin-sound -n '__fish_seen_subcommand_from dictate' -l language -d 'Whisper language code' -r
 `
 }
 
@@ -764,7 +764,7 @@ func (m InstallModel) View() string {
 	if m.uninstall {
 		title = "Uninstall"
 	}
-	b.WriteString(TitleStyle.Render(fmt.Sprintf(" gleann-sound %s ", title)))
+	b.WriteString(TitleStyle.Render(fmt.Sprintf(" gleann-plugin-sound %s ", title)))
 	b.WriteString("\n\n")
 
 	switch m.phase {

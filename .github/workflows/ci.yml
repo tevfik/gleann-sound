@@ -10,6 +10,29 @@ permissions:
   contents: read
 
 jobs:
+  # ── Lint ──────────────────────────────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxtst-dev libxinerama-dev
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
+  # ── Unit tests (stub mode, no CGO backends) ──────────────────
   test:
     name: Test (Go ${{ matrix.go-version }})
     runs-on: ubuntu-latest
@@ -46,7 +69,7 @@ jobs:
           name: coverage
           path: coverage.out
 
-  # ── Cross-platform stub build check ──
+  # ── Cross-platform stub build check ──────────────────────────
   build-stub:
     name: Build Stub (${{ matrix.os-label }})
     runs-on: ${{ matrix.runner }}
@@ -77,12 +100,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libx11-dev libxtst-dev libxinerama-dev
 
+      - name: Install system dependencies (macOS)
+        if: matrix.goos == 'darwin'
+        run: brew install libx11 || true
+
       - name: Build (stub, no whisper.cpp)
         shell: bash
-        run: CGO_ENABLED=1 go build -trimpath -o gleann-sound-stub ./cmd/gleann-sound/
+        run: CGO_ENABLED=1 go build -trimpath -o gleann-plugin-sound-stub ./cmd/gleann-plugin-sound/
 
+  # ── ONNX Runtime build + test ────────────────────────────────
   build-onnx:
-    name: Build ONNX (linux-amd64)
+    name: Build & Test ONNX (linux-amd64)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -107,6 +135,10 @@ jobs:
       - name: Build (with ONNX Runtime)
         run: make build-onnx
 
+      - name: Test (ONNX-tagged packages)
+        run: go test -v -tags onnx -count=1 -timeout 120s ./internal/onnx/... ./internal/audio/...
+
+  # ── Whisper.cpp build ────────────────────────────────────────
   build-whisper:
     name: Build Whisper (linux-amd64)
     runs-on: ubuntu-latest
@@ -128,3 +160,33 @@ jobs:
 
       - name: Build (with whisper.cpp)
         run: make build
+
+  # ── Combined build (whisper + onnx) ──────────────────────────
+  build-all:
+    name: Build All (linux-amd64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxtst-dev libxinerama-dev cmake build-essential
+
+      - name: Install ONNX Runtime
+        run: |
+          ORT_VERSION="1.22.0"
+          curl -sSL "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz" \
+            | sudo tar xz -C /usr/local --strip-components=1
+          sudo ldconfig
+
+      - name: Build whisper.cpp (CPU-only)
+        run: make whisper-setup
+
+      - name: Build (whisper + onnx combined)
+        run: make build-all

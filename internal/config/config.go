@@ -1,4 +1,4 @@
-// Package config manages gleann-sound configuration stored in ~/.gleann/sound.json.
+// Package config manages gleann-plugin-sound configuration stored in ~/.gleann/sound.json.
 //
 // If the config file does not exist, the application falls back to CLI flags.
 // The TUI wizard creates and updates this file.
@@ -6,13 +6,14 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 )
 
-// Config holds the persisted gleann-sound configuration.
+// Config holds the persisted gleann-plugin-sound configuration.
 type Config struct {
 	// Model settings.
 	DefaultModel string `json:"default_model"`          // e.g. "~/.gleann/models/ggml-small.bin"
@@ -26,6 +27,10 @@ type Config struct {
 
 	// Backend selection.
 	Backend string `json:"backend,omitempty"` // "whisper" (default) or "onnx"
+
+	// Execution provider for ONNX backend: "auto" (default), "cuda", "cpu".
+	// "auto" tries CUDA first, falls back to CPU.
+	ExecutionProvider string `json:"execution_provider,omitempty"`
 
 	// Audio source: "mic" (default), "speaker" (loopback), "both".
 	AudioSource string `json:"audio_source,omitempty"`
@@ -54,14 +59,33 @@ type ModelEntry struct {
 	Language string `json:"language"`  // "multilingual" or "en"
 }
 
-// WhisperModel describes an available Whisper model for download.
+// WhisperModel describes an available model for download.
+// For single-file models (GGML, Silero VAD), URL and FileName are used.
+// For multi-file bundles (ONNX), BundleFiles lists relative paths and URLs,
+// and FileName is the subdirectory name (e.g. "whisper-base.en-onnx").
 type WhisperModel struct {
 	Name        string // e.g. "tiny", "base", "small"
 	DisplayName string // e.g. "Tiny (75 MB)"
-	FileName    string // e.g. "ggml-tiny.bin"
+	FileName    string // e.g. "ggml-tiny.bin" or "whisper-base.en-onnx" (directory)
 	Size        string // e.g. "75 MB"
 	Multilingual bool
-	URL         string
+	URL         string // single-file download URL (empty for bundles)
+
+	// BundleFiles lists files to download into a subdirectory.
+	// Each entry maps a relative filename to its download URL.
+	// When non-nil, this is a multi-file model (e.g. ONNX encoder+decoder).
+	BundleFiles []BundleFile `json:"-"`
+}
+
+// BundleFile describes a single file within a multi-file model bundle.
+type BundleFile struct {
+	Name string // relative filename, e.g. "encoder.onnx"
+	URL  string // download URL
+}
+
+// IsBundle returns true if this model requires multi-file download.
+func (m WhisperModel) IsBundle() bool {
+	return len(m.BundleFiles) > 0
 }
 
 // AvailableModels returns the list of Whisper models available for download.
@@ -95,6 +119,49 @@ func AvailableModels() []WhisperModel {
 	}
 }
 
+// AvailableONNXModels returns ONNX Runtime whisper models available for download.
+// Each model is a bundle of encoder.onnx, decoder.onnx, and tokenizer.json.
+//
+// Source: onnx-community on HuggingFace (pre-exported ONNX models).
+// Files are renamed during download to match what the engine expects:
+//
+//	encoder_model.onnx → encoder.onnx
+//	decoder_model.onnx → decoder.onnx  (non-merged, no KV cache)
+//	tokenizer.json     → tokenizer.json
+//
+// We use decoder_model.onnx (NOT decoder_model_merged.onnx) because the
+// merged model requires a use_cache_branch boolean + past_key_values tensors
+// which adds complexity. The non-merged model is simpler: just input_ids +
+// encoder_hidden_states → logits.
+func AvailableONNXModels() []WhisperModel {
+	makeBundle := func(slug, name, display, size string, multi bool) WhisperModel {
+		repo := fmt.Sprintf("https://huggingface.co/onnx-community/whisper-%s/resolve/main", slug)
+		return WhisperModel{
+			Name:         name,
+			DisplayName:  display,
+			FileName:     "whisper-" + slug + "-onnx",
+			Size:         size,
+			Multilingual: multi,
+			BundleFiles: []BundleFile{
+				{Name: "encoder.onnx", URL: repo + "/onnx/encoder_model.onnx"},
+				{Name: "decoder.onnx", URL: repo + "/onnx/decoder_model.onnx"},
+				{Name: "tokenizer.json", URL: repo + "/tokenizer.json"},
+			},
+		}
+	}
+
+	return []WhisperModel{
+		makeBundle("tiny.en", "onnx-tiny.en", "[ONNX] Tiny English — ~150 MB", "150 MB", false),
+		makeBundle("tiny", "onnx-tiny", "[ONNX] Tiny — ~150 MB", "150 MB", true),
+		makeBundle("base.en", "onnx-base.en", "[ONNX] Base English — ~290 MB", "290 MB", false),
+		makeBundle("base", "onnx-base", "[ONNX] Base — ~290 MB", "290 MB", true),
+		makeBundle("small.en", "onnx-small.en", "[ONNX] Small English — ~950 MB", "950 MB", false),
+		makeBundle("small", "onnx-small", "[ONNX] Small — ~950 MB", "950 MB", true),
+		makeBundle("medium.en", "onnx-medium.en", "[ONNX] Medium English — ~3 GB", "3 GB", false),
+		makeBundle("medium", "onnx-medium", "[ONNX] Medium — ~3 GB", "3 GB", true),
+	}
+}
+
 // DefaultDir returns the gleann config directory: ~/.gleann
 func DefaultDir() string {
 	home, _ := os.UserHomeDir()
@@ -104,6 +171,11 @@ func DefaultDir() string {
 // ModelsDir returns ~/.gleann/models
 func ModelsDir() string {
 	return filepath.Join(DefaultDir(), "models")
+}
+
+// LibDir returns ~/.gleann/lib — used for auto-downloaded runtime libraries.
+func LibDir() string {
+	return filepath.Join(DefaultDir(), "lib")
 }
 
 // ConfigPath returns ~/.gleann/sound.json
@@ -173,8 +245,37 @@ func ModelPath(filename string) string {
 	return filepath.Join(ModelsDir(), filename)
 }
 
-// IsModelDownloaded checks if a model file exists in the models directory.
+// IsModelDownloaded checks if a model file (or bundle directory) exists in the models directory.
 func IsModelDownloaded(filename string) bool {
-	_, err := os.Stat(ModelPath(filename))
-	return err == nil
+	info, err := os.Stat(ModelPath(filename))
+	if err != nil {
+		return false
+	}
+	// For bundle directories, check that at least encoder.onnx exists inside.
+	if info.IsDir() {
+		_, err := os.Stat(filepath.Join(ModelPath(filename), "encoder.onnx"))
+		return err == nil
+	}
+	return true
+}
+
+// SileroVADModel returns the Silero VAD model metadata for download.
+func SileroVADModel() WhisperModel {
+	return WhisperModel{
+		Name:        "silero-vad",
+		DisplayName: "Silero VAD — 2 MB (neural speech detection)",
+		FileName:    "silero_vad.onnx",
+		Size:        "2 MB",
+		URL:         "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx",
+	}
+}
+
+// SileroVADPath returns the path to the Silero VAD ONNX model.
+func SileroVADPath() string {
+	return ModelPath("silero_vad.onnx")
+}
+
+// IsSileroVADDownloaded checks if the Silero VAD model is available.
+func IsSileroVADDownloaded() bool {
+	return IsModelDownloaded("silero_vad.onnx")
 }
