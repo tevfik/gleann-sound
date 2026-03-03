@@ -165,14 +165,14 @@ func startCaptureDevice(devType malgo.DeviceType, deviceID *malgo.DeviceID, onDa
 
 	dev, err := malgo.InitDevice(mctx.Context, deviceConfig, malgo.DeviceCallbacks{Data: onRecvFrames})
 	if err != nil {
-		mctx.Uninit()
+		_ = mctx.Uninit()
 		mctx.Free()
 		return nil, fmt.Errorf("audio(%s): failed to init device: %w", label, err)
 	}
 
 	if err := dev.Start(); err != nil {
 		dev.Uninit()
-		mctx.Uninit()
+		_ = mctx.Uninit()
 		mctx.Free()
 		return nil, fmt.Errorf("audio(%s): failed to start device: %w", label, err)
 	}
@@ -193,7 +193,7 @@ func findMonitorDevice() (*malgo.DeviceID, string, error) {
 		return nil, "", fmt.Errorf("failed to init malgo context for device enumeration: %w", err)
 	}
 	defer func() {
-		mctx.Uninit()
+		_ = mctx.Uninit()
 		mctx.Free()
 	}()
 
@@ -296,7 +296,7 @@ func findVirtualAudioDevice() (*malgo.DeviceID, string, error) {
 		return nil, "", fmt.Errorf("failed to init malgo context: %w", err)
 	}
 	defer func() {
-		mctx.Uninit()
+		_ = mctx.Uninit()
 		mctx.Free()
 	}()
 
@@ -329,7 +329,7 @@ func findVirtualAudioDevice() (*malgo.DeviceID, string, error) {
 // stopDevice stops and frees a single malgo device.
 func (d *malgoDevice) stop() {
 	d.device.Uninit()
-	d.ctx.Uninit()
+	_ = d.ctx.Uninit()
 	d.ctx.Free()
 	log.Printf("[audio] %s capture stopped", d.label)
 }
@@ -425,7 +425,7 @@ func ListCaptureDevices() ([]AudioDeviceInfo, error) {
 		return nil, fmt.Errorf("failed to init malgo context: %w", err)
 	}
 	defer func() {
-		mctx.Uninit()
+		_ = mctx.Uninit()
 		mctx.Free()
 	}()
 
@@ -453,7 +453,7 @@ func ListPlaybackDevices() ([]AudioDeviceInfo, error) {
 		return nil, fmt.Errorf("failed to init malgo context: %w", err)
 	}
 	defer func() {
-		mctx.Uninit()
+		_ = mctx.Uninit()
 		mctx.Free()
 	}()
 

@@ -66,8 +66,6 @@ type downloadDoneMsg struct {
 	err   error
 }
 
-type allDownloadsDoneMsg struct{}
-
 type onnxRTDownloadDoneMsg struct {
 	err error
 }
@@ -281,10 +279,6 @@ func NewSetupModel(existingCfg *config.Config) SetupModel {
 		}
 		isReconfigure = existingCfg.Completed
 
-		// Pre-populate installed models from existing config.
-		if isReconfigure && len(existingCfg.Models) > 0 {
-			// Use existing models list.
-		}
 	}
 
 	startPhase := setupPhase(phaseModelSelect)

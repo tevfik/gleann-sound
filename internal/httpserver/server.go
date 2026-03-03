@@ -93,7 +93,7 @@ func (s *Server) getEngine() (core.Transcriber, error) {
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"status":       "ok",
 		"plugin":       "gleann-plugin-sound",
 		"capabilities": []string{"document-extraction"},
@@ -160,7 +160,7 @@ func (s *Server) handleConvert(w http.ResponseWriter, r *http.Request) {
 	md := formatMarkdown(header.Filename, segments)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	_ = json.NewEncoder(w).Encode(map[string]string{
 		"markdown": md,
 	})
 }
@@ -207,5 +207,5 @@ func formatTimestamp(d time.Duration) string {
 func writeError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }

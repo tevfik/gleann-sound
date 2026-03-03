@@ -111,7 +111,7 @@ func TestMalgoCapturer_StartMic(t *testing.T) {
 		t.Logf("Start(mic) returned expected error (no audio device): %v", err)
 		return
 	}
-	defer c.Stop()
+	defer func() { _ = c.Stop() }()
 
 	// Should not be able to start twice.
 	err = c.Start(ctx, func(pcm []int16) {})
@@ -131,7 +131,7 @@ func TestMalgoCapturer_StartSpeaker(t *testing.T) {
 		t.Logf("Start(speaker) returned expected error: %v", err)
 		return
 	}
-	defer c.Stop()
+	defer func() { _ = c.Stop() }()
 }
 
 func TestMalgoCapturer_StartBoth(t *testing.T) {
@@ -144,7 +144,7 @@ func TestMalgoCapturer_StartBoth(t *testing.T) {
 		t.Logf("Start(both) returned expected error: %v", err)
 		return
 	}
-	defer c.Stop()
+	defer func() { _ = c.Stop() }()
 }
 
 func TestMalgoCapturer_ContextCancelsCapture(t *testing.T) {

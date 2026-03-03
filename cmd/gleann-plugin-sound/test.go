@@ -186,7 +186,7 @@ func testHotkey(hotkeyStr string) bool {
 		fmt.Printf("  ✗ Failed to register: %v\n", err)
 		return false
 	}
-	defer hk.Unregister()
+	defer func() { _ = hk.Unregister() }()
 
 	fmt.Println("  ✓ Hotkey registered, waiting for keypress...")
 

@@ -161,5 +161,5 @@ func runCLIMode(cfg *config.Config, mode string) {
 	// Wait for user to acknowledge before returning to TUI.
 	fmt.Println("\nPress enter to return to menu...")
 	buf := make([]byte, 1)
-	os.Stdin.Read(buf)
+	_, _ = os.Stdin.Read(buf)
 }

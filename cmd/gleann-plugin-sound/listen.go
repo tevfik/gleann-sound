@@ -171,7 +171,7 @@ Press Ctrl+C to stop.`,
 			if err != nil {
 				return fmt.Errorf("failed to start audio capture: %w", err)
 			}
-			defer capturer.Stop()
+			defer func() { _ = capturer.Stop() }()
 
 			log.Println("[listen] streaming pipeline active — listening… (Ctrl+C to stop)")
 
@@ -187,7 +187,7 @@ Press Ctrl+C to stop.`,
 			})
 
 			if outFile != nil {
-				outFile.Sync()
+				_ = outFile.Sync()
 			}
 
 			// context.Canceled is normal shutdown, not an error.

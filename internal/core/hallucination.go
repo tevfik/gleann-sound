@@ -17,10 +17,7 @@ func IsHallucination(text string) bool {
 	}
 	// Parenthesized-only output like "(Beyik)" or "(Hepsi)" is a hallucination.
 	stripped := strings.TrimSpace(text)
-	if isParenthesizedOnly(stripped) {
-		return true
-	}
-	return false
+	return isParenthesizedOnly(stripped)
 }
 
 // IsRepetitive detects decoder-loop output where a short phrase is repeated

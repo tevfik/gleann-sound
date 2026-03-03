@@ -186,29 +186,10 @@ func (p *StreamingPipeline) Run(ctx context.Context, audioCh <-chan []int16, onR
 					copy(window, p.buf[:end])
 				}
 
-				// Save overlap for next window (last overlapSamples of this step's data).
-				if p.overlapSamples > 0 {
-					overlapStart := p.stepSamples - p.overlapSamples
-					if overlapStart < 0 {
-						overlapStart = 0
-					}
-					end := p.stepSamples
-					if end > len(p.buf) {
-						end = len(p.buf)
-					}
-					// Include both old overlap tail and new data overlap.
-					if len(p.overlapBuf) > 0 {
-						// The overlap for next window is the last overlapSamples of the current window.
-						if len(window) >= p.overlapSamples {
-							p.overlapBuf = make([]int16, p.overlapSamples)
-							copy(p.overlapBuf, window[len(window)-p.overlapSamples:])
-						}
-					} else {
-						if len(window) >= p.overlapSamples {
-							p.overlapBuf = make([]int16, p.overlapSamples)
-							copy(p.overlapBuf, window[len(window)-p.overlapSamples:])
-						}
-					}
+				// Save overlap for next window (last overlapSamples of the current window).
+				if p.overlapSamples > 0 && len(window) >= p.overlapSamples {
+					p.overlapBuf = make([]int16, p.overlapSamples)
+					copy(p.overlapBuf, window[len(window)-p.overlapSamples:])
 				}
 
 				// Advance buffer past the step.

@@ -145,7 +145,7 @@ Press Ctrl+C to exit.`,
 			if err := hk.Register(); err != nil {
 				return fmt.Errorf("failed to register hotkey %q: %w", hotkeyStr, err)
 			}
-			defer hk.Unregister()
+			defer func() { _ = hk.Unregister() }()
 
 			// ── Optional gRPC server alongside dictation ─────────
 			if grpcAddr != "" {

@@ -159,7 +159,7 @@ func TestMockTranscriber(t *testing.T) {
 		t.Errorf("unexpected segments: %v", segs)
 	}
 
-	segs, err = m.TranscribeFile(context.Background(), "/path/to/file.wav")
+	_, err = m.TranscribeFile(context.Background(), "/path/to/file.wav")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestMockAudioCapturer(t *testing.T) {
 		t.Errorf("expected 3 samples, got %d", len(received))
 	}
 
-	m.Stop()
+	_ = m.Stop()
 	if !m.stopped {
 		t.Error("expected stopped to be true")
 	}
