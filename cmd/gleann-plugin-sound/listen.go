@@ -141,7 +141,7 @@ Press Ctrl+C to stop.`,
 					if outIsTxt {
 						fmt.Fprintf(outFile, "%s\n", strings.TrimSpace(result.Text))
 					} else {
-						json.NewEncoder(outFile).Encode(js)
+						_ = json.NewEncoder(outFile).Encode(js)
 					}
 				}
 			}

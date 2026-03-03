@@ -166,7 +166,7 @@ func TestMalgoCapturer_ContextCancelsCapture(t *testing.T) {
 	c.mu.Unlock()
 	if running {
 		t.Error("capturer should have stopped after context cancellation")
-		c.Stop()
+		_ = c.Stop()
 	}
 }
 
