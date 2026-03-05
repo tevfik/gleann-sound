@@ -187,7 +187,6 @@ jobs:
               -DWHISPER_BUILD_EXAMPLES=OFF \
               -DWHISPER_BUILD_TESTS=OFF \
               -DBUILD_SHARED_LIBS=OFF \
-              -DBUILD_SHARED_LIBS=OFF \
               ${{ matrix.cmake-extra }}
             cmake --build . --config Release --parallel 2
           else
@@ -207,9 +206,10 @@ jobs:
               -DWHISPER_BUILD_TESTS=OFF \
               -DBUILD_SHARED_LIBS=OFF \
               ${{ matrix.cmake-extra }}
-            cmake --build . --config Release --parallel 2
+          cmake --build . --config Release --parallel 2
           fi
           cmake --install . --config Release
+          ls -R "$WHISPER_DIR/dist/lib"
 
       - name: Determine version
         id: version
@@ -229,8 +229,9 @@ jobs:
           elif [ "${{ matrix.goos }}" = "darwin" ]; then
             EXTRA_LDFLAGS="-lm -lc++ -lpthread -framework Accelerate"
           elif [ "${{ matrix.goos }}" = "windows" ]; then
-            # Static linking to avoid DLL dependencies
-            EXTRA_LDFLAGS="-lstdc++ -lpthread -static-libgcc -static-libstdc++"
+            # Static linking to avoid DLL dependencies.
+            # Added system libs required by newer whisper.cpp/ggml
+            EXTRA_LDFLAGS="-lstdc++ -lpthread -static-libgcc -static-libstdc++ -lsetupapi -ladvapi32 -lole32 -lshlwapi"
           fi
 
           CGO_ENABLED=1 \
