@@ -89,6 +89,7 @@ Run 'gleann-plugin-sound tui' for interactive setup and configuration.`,
 		newDevicesCmd(),
 		newPluginServeCmd(),
 		newInstallPluginCmd(),
+		newVersionCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
