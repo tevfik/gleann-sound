@@ -154,7 +154,7 @@ jobs:
 
       - name: Install system dependencies (macOS)
         if: matrix.goos == 'darwin'
-        run: brew install cmake
+        run: brew install cmake llvm libomp openblas
 
       - name: Build whisper.cpp (CPU-only)
         shell: bash
@@ -181,6 +181,12 @@ jobs:
               ${{ matrix.cmake-extra }}
             cmake --build . --config Release -j$(nproc 2>/dev/null || echo 2)
           else
+            if [ "${{ matrix.goos }}" = "darwin" ]; then
+              export CC=$(brew --prefix llvm)/bin/clang
+              export CXX=$(brew --prefix llvm)/bin/clang++
+              export LDFLAGS="-L$(brew --prefix llvm)/lib -L$(brew --prefix libomp)/lib"
+              export CPPFLAGS="-I$(brew --prefix llvm)/include -I$(brew --prefix libomp)/include"
+            fi
             cmake .. \
               -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_INSTALL_PREFIX="$WHISPER_DIR/dist" \
