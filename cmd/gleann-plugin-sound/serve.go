@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/tevfik/gleann-plugin-sound/internal/audio"
+	"github.com/tevfik/gleann-plugin-sound/internal/config"
 	"github.com/tevfik/gleann-plugin-sound/internal/core"
 	"github.com/tevfik/gleann-plugin-sound/internal/plugin"
 )
@@ -39,6 +40,13 @@ Use --addr to configure the listen address.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			modelPath, _ := cmd.Flags().GetString("model")
 			lang, _ := cmd.Flags().GetString("language")
+
+			// Load language from config if flag not set.
+			if lang == "" {
+				if cfg := config.Load(); cfg != nil && cfg.Language != "" {
+					lang = cfg.Language
+				}
+			}
 
 			log.Println("[serve] initialising...")
 

@@ -43,6 +43,13 @@ Requires ffmpeg to be installed and available on $PATH.`,
 			modelPath, _ := cmd.Flags().GetString("model")
 			lang, _ := cmd.Flags().GetString("language")
 
+			// Load language from config if flag not set.
+			if lang == "" {
+				if cfg := config.Load(); cfg != nil && cfg.Language != "" {
+					lang = cfg.Language
+				}
+			}
+
 			log.Println("[transcribe] initialising...")
 
 			// ── Initialise transcription engine ──────────────────
