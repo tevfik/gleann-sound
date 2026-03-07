@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"math"
@@ -22,7 +21,6 @@ import (
 	"github.com/tevfik/gleann-plugin-sound/internal/hotkey"
 	"github.com/tevfik/gleann-plugin-sound/internal/keyboard"
 	"github.com/tevfik/gleann-plugin-sound/internal/pipeline"
-	"github.com/tevfik/gleann-plugin-sound/internal/plugin"
 )
 
 // newDictateCmd creates the "dictate" subcommand (Mode 4: Voice Dictation).
@@ -36,7 +34,6 @@ import (
 // resulting text is injected as simulated keystrokes into the active window.
 func newDictateCmd() *cobra.Command {
 	var hotkeyStr string
-	var grpcAddr string
 
 	cmd := &cobra.Command{
 		Use:   "dictate",
@@ -70,9 +67,6 @@ Press Ctrl+C to exit.`,
 				}
 				if lang == "" && cfg.Language != "" {
 					lang = cfg.Language
-				}
-				if grpcAddr == "" && cfg.GRPCAddr != "" {
-					grpcAddr = cfg.GRPCAddr
 				}
 				log.Printf("[dictate] config loaded from %s", config.ConfigPath())
 			}
@@ -147,29 +141,6 @@ Press Ctrl+C to exit.`,
 			}
 			defer func() { _ = hk.Unregister() }()
 
-			// ── Optional gRPC server alongside dictation ─────────
-			if grpcAddr != "" {
-				grpcHandler := func(event core.TranscriptionEvent) {
-					enc := json.NewEncoder(os.Stderr)
-					for _, seg := range event.Segments {
-						_ = enc.Encode(newJSONSegment(seg))
-					}
-				}
-				srv := plugin.NewGRPCServer(capturer, engine, grpcHandler)
-				go func() {
-					log.Printf("[dictate] starting gRPC server on %s", grpcAddr)
-					if err := srv.Serve(grpcAddr); err != nil {
-						if strings.Contains(err.Error(), "address already in use") {
-							log.Printf("[dictate] gRPC: port %s already in use, skipping", grpcAddr)
-						} else {
-							log.Printf("[dictate] gRPC server error: %v", err)
-						}
-					}
-				}()
-				defer srv.Stop()
-				log.Printf("[dictate] gRPC server enabled on %s", grpcAddr)
-			}
-
 			log.Printf("[dictate] ✓ ready — hold <%s> to speak, release to transcribe", hotkeyStr)
 			log.Println("[dictate] press Ctrl+C to exit")
 
@@ -184,8 +155,6 @@ Press Ctrl+C to exit.`,
 		"Path to Whisper model file. Falls back to config default_model")
 	cmd.Flags().String("language", "",
 		"Language code for transcription (e.g. tr, en, de). Empty = auto-detect")
-	cmd.Flags().StringVar(&grpcAddr, "addr", "",
-		"Optional gRPC listen address (e.g. localhost:50051). Enables gRPC server alongside dictation")
 
 	return cmd
 }

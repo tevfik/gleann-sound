@@ -35,6 +35,15 @@ type Config struct {
 	// listen sessions.  0 = disabled (e.g. for short dictation sessions).
 	// Default: 10 (~30s with 3s steps)
 	MaxWindowsBeforeReset int
+
+	// OnError is called when a transcription error occurs. The callback receives
+	// the error and the number of consecutive errors so far.
+	// Default: nil (errors are only logged)
+	OnError func(err error, consecutiveCount int)
+
+	// MaxConsecutiveErrors is the threshold after which the pipeline logs a
+	// warning about sustained failures. Default: 5
+	MaxConsecutiveErrors int
 }
 
 // DefaultConfig returns sensible defaults for whisper.cpp (fast native inference).
@@ -44,6 +53,7 @@ func DefaultConfig() Config {
 		StepSizeSec:           3.0,
 		MinSpeechSec:          0.15,
 		MaxWindowsBeforeReset: 10,
+		MaxConsecutiveErrors:  5,
 	}
 }
 
@@ -56,6 +66,7 @@ func ONNXConfig() Config {
 		StepSizeSec:           8.0,
 		MinSpeechSec:          0.3,
 		MaxWindowsBeforeReset: 5,
+		MaxConsecutiveErrors:  5,
 	}
 }
 
@@ -90,6 +101,9 @@ type StreamingPipeline struct {
 
 	// Periodic reset counter: tracks successful windows since last reset.
 	windowsSinceReset int
+
+	// consecutiveErrors tracks how many transcription errors have occurred in a row.
+	consecutiveErrors int
 }
 
 // NewStreamingPipeline creates a pipeline with the given transcriber, VAD, and config.
@@ -105,6 +119,9 @@ func NewStreamingPipeline(transcriber core.StreamingTranscriber, vad core.VADPro
 	}
 	if cfg.MinSpeechSec <= 0 {
 		cfg.MinSpeechSec = DefaultConfig().MinSpeechSec
+	}
+	if cfg.MaxConsecutiveErrors <= 0 {
+		cfg.MaxConsecutiveErrors = 5
 	}
 
 	windowSamples := int(cfg.WindowSizeSec * SampleRate)
@@ -215,10 +232,30 @@ func (p *StreamingPipeline) Run(ctx context.Context, audioCh <-chan []int16, onR
 				// Transcribe with context.
 				result, nextPrompt, err := p.transcriber.TranscribeWindow(ctx, window, promptText)
 				if err != nil {
+					p.mu.Lock()
+					p.consecutiveErrors++
+					ce := p.consecutiveErrors
+					p.mu.Unlock()
+
 					log.Printf("[pipeline] window #%d: transcription error: %v", seq, err)
+					if p.cfg.OnError != nil {
+						p.cfg.OnError(err, ce)
+					}
+					maxCE := p.cfg.MaxConsecutiveErrors
+					if maxCE <= 0 {
+						maxCE = 5
+					}
+					if ce >= maxCE {
+						log.Printf("[pipeline] WARNING: %d consecutive transcription errors", ce)
+					}
 					p.mu.Lock()
 					continue
 				}
+
+				// Successful transcription — reset consecutive error counter.
+				p.mu.Lock()
+				p.consecutiveErrors = 0
+				p.mu.Unlock()
 
 				// Filter repetitive/hallucinated output at the pipeline level.
 				if result.Text != "" && (core.IsRepetitive(result.Text) || core.IsHallucination(result.Text)) {

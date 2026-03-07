@@ -9,8 +9,8 @@ require (
 	github.com/gen2brain/malgo v0.11.22
 	github.com/go-vgo/robotgo v0.110.5
 	github.com/spf13/cobra v1.9.1
+	github.com/yalue/onnxruntime_go v1.26.0
 	golang.design/x/hotkey v0.4.1
-	google.golang.org/grpc v1.72.0
 )
 
 require (
@@ -56,13 +56,10 @@ require (
 	github.com/vcaesar/keycode v0.10.1 // indirect
 	github.com/vcaesar/tt v0.20.1 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	github.com/yalue/onnxruntime_go v1.26.0 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	golang.org/x/exp v0.0.0-20241004190924-225e2abe05e6 // indirect
 	golang.org/x/image v0.21.0 // indirect
 	golang.org/x/net v0.35.0 // indirect
 	golang.org/x/sys v0.38.0 // indirect
 	golang.org/x/text v0.22.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20250218202821-56aae31c358a // indirect
-	google.golang.org/protobuf v1.36.6 // indirect
 )

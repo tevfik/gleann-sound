@@ -6,8 +6,7 @@
 //
 //  1. transcribe — On-demand file transcription
 //  2. listen     — Live CLI streaming transcription
-//  3. serve      — Background gRPC daemon (HashiCorp go-plugin)
-//  4. dictate    — Push-to-talk voice dictation with keystroke injection
+//  3. dictate    — Push-to-talk voice dictation with keystroke injection
 package main
 
 import (
@@ -30,8 +29,8 @@ func main() {
 		Use:   "gleann-plugin-sound",
 		Short: "Audio processing companion for the gleann RAG engine",
 		Long: `gleann-plugin-sound captures audio, runs local Whisper inference, and
-delivers transcriptions — either as CLI output, background gRPC events
-for the main gleann application, or as injected keystrokes for voice dictation.
+delivers transcriptions — either as CLI output or as injected keystrokes
+for voice dictation.
 
 All audio is processed locally using whisper.cpp — no cloud APIs required.
 
@@ -82,7 +81,6 @@ Run 'gleann-plugin-sound tui' for interactive setup and configuration.`,
 	root.AddCommand(
 		newTranscribeCmd(),
 		newListenCmd(),
-		newServeCmd(),
 		newDictateCmd(),
 		newTUICmd(),
 		newTestCmd(),

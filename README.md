@@ -3,7 +3,7 @@
 [![CI](https://github.com/tevfik/gleann-plugin-sound/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tevfik/gleann-plugin-sound/actions/workflows/ci.yml)
 [![Release](https://github.com/tevfik/gleann-plugin-sound/actions/workflows/release.yml/badge.svg?event=push)](https://github.com/tevfik/gleann-plugin-sound/actions/workflows/release.yml)
 
-Audio processing companion daemon/plugin for the [gleann](https://github.com/tevfik/gleann) vector database. Captures audio, runs local [whisper.cpp](https://github.com/ggerganov/whisper.cpp) or [ONNX Runtime](https://onnxruntime.ai/) inference, and delivers transcriptions — as CLI output, streaming gRPC events, or injected keystrokes for voice dictation.
+Audio processing companion daemon/plugin for the [gleann](https://github.com/tevfik/gleann) vector database. Captures audio, runs local [whisper.cpp](https://github.com/ggerganov/whisper.cpp) or [ONNX Runtime](https://onnxruntime.ai/) inference, and delivers transcriptions — as CLI output or injected keystrokes for voice dictation.
 
 All audio is processed **locally** — no cloud APIs required.
 
@@ -12,21 +12,19 @@ All audio is processed **locally** — no cloud APIs required.
 - **Dual Backend** — whisper.cpp (CPU, default) or ONNX Runtime (CPU/GPU), selectable via `--backend` flag or TUI
 - **Local Whisper Inference** — CGO-backed whisper.cpp, CPU-only (no GPU required)
 - **ONNX Runtime Backend** — GPU-accelerated inference via CUDA/DirectML/CoreML when available
-- **6 Execution Modes** — File transcription, live streaming, gRPC daemon, voice dictation, interactive TUI, diagnostic test
+- **5 Execution Modes** — File transcription, live streaming, voice dictation, interactive TUI, diagnostic test
 - **Push-to-Talk Dictation** — Global hotkey captures speech and injects text as keystrokes
 - **Async Pipeline** — Transcription runs in background; start a new recording immediately while previous one is being transcribed
 - **Auto-Chunking** — Long recordings (>30 s) are split and transcribed in streaming fashion
 - **Anti-Repetition** — Decoder loop prevention via max_tokens, entropy threshold, and pattern detection
 - **Hallucination Filtering** — Multi-layer filtering: no_speech_prob, pattern matching, and pre-VAD silence detection
-- **gRPC Alongside Dictation** — Optionally run gRPC server alongside dictation mode for gleann integration
 - **Quantized Models** — Q5/Q8 quantized models for 2-3× faster inference with minimal quality loss
-- **Interactive TUI** — Setup wizard for model download, configuration, backend selection, gRPC toggle, daemon install, and diagnostics
+- **Interactive TUI** — Setup wizard for model download, configuration, backend selection, daemon install, and diagnostics
 - **Multilingual** — Supports 99+ languages via multilingual Whisper models
 - **Energy-Based VAD** — Voice Activity Detection with EMA smoothing, skips silence automatically
 - **Cross-Platform Audio** — MiniAudio (malgo) with PulseAudio + ALSA fallback / WASAPI / CoreAudio
 - **Cross-Platform Hotkeys** — evdev on Linux (X11 + Wayland), Carbon on macOS, Win32 on Windows
 - **Daemon Mode** — systemd (Linux), launchd (macOS), schtasks (Windows) auto-start at login
-- **gRPC Plugin** — Background daemon mode for integration with the main gleann application
 - **Config System** — Persistent settings in `~/.gleann/sound.json`, CLI flags as override/fallback
 - **Shell Completions** — bash, zsh, and fish autocompletion
 - **Stub Mode** — Build and develop without whisper.cpp installed (no-op transcriber)
@@ -37,7 +35,7 @@ All audio is processed **locally** — no cloud APIs required.
 ```
 ┌──────────────────────────────────────────────────────────┐
 │                CLI  (cobra)                               │
-│  transcribe │ listen │ serve │ dictate │ tui │ test       │
+│  transcribe │ listen │ dictate │ tui │ test               │
 ├─────────────┴────────┴───────┴─────────┴─────┴───────────┤
 │                Backend Registry                           │
 │  core.NewTranscriber(backend, model)                      │
@@ -54,10 +52,9 @@ All audio is processed **locally** — no cloud APIs required.
 ├──────────────────────────────────────────────────────────┤
 │  Dictation Pipeline (async)                               │
 │  Hotkey → Record → [auto-chunk] → Transcribe → Inject    │
-│  Optional: + gRPC server (--addr)                         │
 ├──────────────────────────────────────────────────────────┤
 │  Config (~/.gleann/sound.json)                            │
-│  TUI (bubbletea) │ gRPC Plugin │ HTTP Plugin (gleann build)│
+│  TUI (bubbletea) │ HTTP Plugin (gleann build)             │
 │  Daemon (systemd / launchd / schtasks)                    │
 └──────────────────────────────────────────────────────────┘
 ```
@@ -114,8 +111,7 @@ The TUI wizard guides you through:
 2. **Default Model** — Set the model used when `--model` is not specified
 3. **Language** — Set default language (or auto-detect)
 4. **Hotkey** — Configure the push-to-talk hotkey for dictate mode
-5. **gRPC Server** — Enable/disable gRPC server alongside dictation
-6. **Backend** — Choose transcription backend (whisper or onnx)
+5. **Backend** — Choose transcription backend (whisper or onnx)
 7. **Output Directory** — Set where transcription files are saved
 8. **Save** — Configuration saved to `~/.gleann/sound.json`
 
@@ -155,9 +151,6 @@ gleann-plugin-sound dictate
 # With explicit flags (overrides config)
 gleann-plugin-sound dictate --key "ctrl+shift+space" --model ~/.gleann/models/ggml-small-q5_1.bin --language tr
 
-# With gRPC server alongside dictation
-gleann-plugin-sound dictate --key "ctrl+shift+space" --addr localhost:50051
-
 # As a background daemon (auto-starts at login)
 gleann-plugin-sound tui → Install → "Start dictate daemon at login"
 ```
@@ -168,9 +161,7 @@ gleann-plugin-sound tui → Install → "Start dictate daemon at login"
 |------|---------|-------------|
 | **Transcribe** | `gleann-plugin-sound transcribe` | On-demand file transcription via ffmpeg → Whisper |
 | **Listen** | `gleann-plugin-sound listen` | Live microphone streaming with VAD, JSON output |
-| **Serve** | `gleann-plugin-sound serve` | Background gRPC daemon for gleann integration |
 | **Dictate** | `gleann-plugin-sound dictate` | Push-to-talk with async transcription + keystroke injection |
-| **Dictate+gRPC** | `gleann-plugin-sound dictate --addr :50051` | Dictation + gRPC server in same process |
 | **TUI** | `gleann-plugin-sound tui` | Interactive setup, install, daemon management, and diagnostics |
 | **Test** | `gleann-plugin-sound test` | Diagnostic: mic, hotkey, whisper, keyboard |
 | **Plugin Serve** | `gleann-plugin-sound plugin-serve` | HTTP server for gleann build integration |
@@ -257,9 +248,8 @@ The model is loaded **lazily** on the first `/convert` request, so the server st
 
 ### Notes
 
-- **Timeout**: gleann's PluginManager has a 30-second HTTP timeout per file. Files up to ~5 minutes transcribe within this limit. For longer files, use `gleann-plugin-sound transcribe --file` separately.
+- **Timeout**: gleann's PluginManager uses a configurable HTTP timeout per file (default: 120 seconds). Plugins can specify their own timeout in `plugins.json`. For very long files, use `gleann-plugin-sound transcribe --file` separately.
 - **Concurrency**: The Whisper engine is not thread-safe. Concurrent requests from gleann's parallel workers are serialised via mutex.
-- **Separate from gRPC**: The `plugin-serve` command (HTTP, for batch indexing) is independent from the `serve` command (gRPC, for live streaming/dictation).
 
 ## Usage
 
@@ -297,26 +287,12 @@ gleann-plugin-sound listen --model models/ggml-base.en.bin --language tr
 gleann-plugin-sound listen --model models/ggml-base.en.bin -o transcription.jsonl
 ```
 
-### gRPC Daemon
-
-Run as a background daemon for gleann integration:
-
-```bash
-gleann-plugin-sound serve --model models/ggml-base.en.bin --addr localhost:50051
-```
-
 ### Voice Dictation
 
 Push-to-talk dictation — hold the hotkey to speak, release to transcribe and inject as keystrokes:
 
 ```bash
 gleann-plugin-sound dictate --key "ctrl+shift+space" --model models/ggml-small-q5_1.bin --language tr
-```
-
-**With gRPC server**: Add `--addr` to run a gRPC server alongside dictation. This allows the main gleann application to connect over gRPC while dictation continues normally:
-
-```bash
-gleann-plugin-sound dictate --key "ctrl+shift+space" --addr localhost:50051
 ```
 
 **Async pipeline**: Transcription and injection run in the background. You can press the hotkey again immediately while the previous recording is still being transcribed.
@@ -347,11 +323,10 @@ gleann-plugin-sound tui
 ```
 
 The TUI provides these screens:
-- **Setup** — Download models (full + quantized), configure language, hotkey, backend, output directory, gRPC server, and default model
+- **Setup** — Download models (full + quantized), configure language, hotkey, backend, output directory, and default model
 - **Install** — Copy binary to `~/.local/bin`, install shell completions, setup input group, install daemon
 - **Uninstall** — Remove binary, daemon, completions, config, and downloaded models
 - **Dictate** — Launch dictation mode from the TUI
-- **Serve** — Launch gRPC daemon mode from the TUI
 - **Test** — Run the diagnostic test from the TUI
 
 ## Daemon Management
@@ -393,7 +368,6 @@ Configuration is stored in `~/.gleann/sound.json` and created by the TUI setup w
   "hotkey": "ctrl+shift+space",
   "backend": "whisper",
   "output_dir": "~/transcriptions",
-  "grpc_addr": "localhost:50051",
   "models": [
     {
       "name": "small-q5_1",
@@ -582,8 +556,7 @@ gleann-plugin-sound/
 │   ├── main.go                # Root command, version, global flags, config loading
 │   ├── transcribe.go          # Mode 1: file transcription (--output)
 │   ├── listen.go              # Mode 2: live streaming (--output)
-│   ├── serve.go               # Mode 3: gRPC daemon
-│   ├── dictate.go             # Mode 4: push-to-talk dictation (async, optional gRPC)
+│   ├── dictate.go             # Mode 3: push-to-talk dictation (async)
 │   ├── test.go                # Mode 5: diagnostic test command
 │   ├── tui.go                 # Mode 6: interactive TUI
 │   ├── plugin_serve.go        # HTTP server for gleann plugin integration
@@ -614,13 +587,11 @@ gleann-plugin-sound/
 │   ├── tui/                   # Interactive terminal UI
 │   │   ├── tui.go             # Multi-screen orchestrator
 │   │   ├── home.go            # Home menu (Setup/Dictate/Serve/Test/Install…)
-│   │   ├── setup.go           # Setup wizard (models, language, hotkey, backend, output, gRPC)
+│   │   ├── setup.go           # Setup wizard (models, language, hotkey, backend, output)
 │   │   ├── install.go         # Install/Uninstall + daemon management
 │   │   └── styles.go          # Lipgloss theme & ASCII logo
 │   ├── httpserver/            # HTTP plugin server (gleann build integration)
 │   │   └── server.go          # /health + /convert endpoints
-│   └── plugin/                # gRPC server (live streaming)
-│       └── grpc_server.go     # gRPC plugin server for gleann integration
 ├── .github/workflows/
 │   ├── ci.yml                 # Test + build on push/PR (stub + whisper + onnx)
 │   └── release.yml            # Tag-triggered release builds
@@ -667,7 +638,7 @@ go test ./internal/config/ -v
 go test ./internal/tui/ -v
 go test ./internal/audio/ -v
 go test ./internal/hotkey/ -v
-go test ./internal/plugin/ -v
+go test ./internal/pipeline/ -v
 
 # Lint (requires golangci-lint)
 make lint
@@ -687,7 +658,6 @@ make lint
 | Keystrokes | [robotgo](https://github.com/go-vgo/robotgo) | Simulated keyboard input (X11/WASAPI) |
 | CLI | [cobra](https://github.com/spf13/cobra) | Command-line framework |
 | TUI | [bubbletea](https://github.com/charmbracelet/bubbletea) + [lipgloss](https://github.com/charmbracelet/lipgloss) | Interactive terminal UI |
-| RPC | [gRPC](https://grpc.io/) | Plugin communication with gleann |
 
 ## Makefile Targets
 
